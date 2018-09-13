@@ -3,6 +3,7 @@
 
 #include <pthread.h>
 #include "ctc_common.h"
+#include "ctc_network.h"
 
 #define MAX_CTC_HANDLE_COUNT 100 /* CTC_SESSION_GROUP_MAX */
 #define MAX_JOB_HANDLE_COUNT 10
@@ -19,9 +20,7 @@ struct job_handle
 {
     int ID;
 
-    int job_desc; /* receive from ctc_server */
-
-    int job_sd;
+    JOB_SESSION job_session;
 };
 
 typedef struct ctc_handle CTC_HANDLE;
@@ -29,11 +28,9 @@ struct ctc_handle
 {
     int ID;
 
-    int session_gid; /* receive from ctc_server */
-
     CONN_TYPE conn_type;
 
-    int control_sd;
+    CONTROL_SESSION control_session;
 
     JOB_HANDLE job_pool[MAX_JOB_HANDLE_COUNT];
 };
