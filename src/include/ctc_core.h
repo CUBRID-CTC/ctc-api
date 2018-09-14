@@ -38,6 +38,6 @@ struct ctc_handle
 extern pthread_once_t ctc_api_once_init;
 
 void ctc_api_init (void);
-int connect_server (CONN_TYPE, char*, int*);
+int connect_server (CONN_TYPE, char *, int *);
 
 #endif

@@ -3,9 +3,10 @@
 
 #include "ctc_common.h"
 
-#define CTCP_MAJOR_VERSION 0x01
-#define CTCP_MINOR_VERSION 0x00
-#define CTCP_PATCH_VERSION 0x00
+#define CTCP_MAJOR_VERSION 1
+#define CTCP_MINOR_VERSION 0
+#define CTCP_PATCH_VERSION 0
+#define CTCP_BUILD_VERSION 0
 
 typedef enum ctcp_operation CTCP_OP;
 enum ctcp_operation
@@ -55,6 +56,17 @@ enum ctcp_result_code
     CTC_RC_FAILED_NOT_SUPPORTED_FILTER   = 0x50
 };
 
+typedef struct ctcp_header CTCP_HEADER;
+struct ctcp_header
+{
+    char op;
+    char op_param_or_result_code;
+    unsigned short job_desc;
+    int session_gid;
+    char version[4];
+    int multi_purpose; /* job or server status, data length, job attribute value */
+};
+
 typedef struct job_session JOB_SESSION;
 struct job_session
 {
@@ -70,8 +82,8 @@ struct control_session
 
     int sockfd;
 
-    char server_ip[16];
-    short server_port;
+    char ip[16];
+    unsigned short port;
 };
 
 #endif

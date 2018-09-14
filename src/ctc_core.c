@@ -1,3 +1,4 @@
+#include <regex.h>
 #include "ctc_core.h"
 #include "ctc_network.h"
 
@@ -22,8 +23,31 @@ void ctc_api_init (void)
     }
 }
 
-int validate_url (CTC_HANDLE* ctc_handle, char* url)
+int validate_url (CTC_HANDLE *ctc_handle, char *url)
 {
+    char *url_pattern = "^[[:blank:]]*ctc:cubrid:([[:digit:]]{1,3}.[[:digit:]]{1,3}.[[:digit:]]{1,3}.[[:digit:]]{1,3}):([[:digit:]]{1,5})[[:blank:]]*$";
+
+    regex_t reg;
+    regmatch_t match[3];
+
+    if (IS_FAILURE (regcomp (&reg, url_pattern, REG_ICASE | REG_EXTENDED)))
+    {
+        goto error;
+    }
+
+    if (IS_FAILURE (regexec (&reg, url, 3, match, 0)))
+    {
+        goto error;
+    }
+
+    /* ip */
+    memset (ctc_handle->control_session.ip, 0, sizeof (ctc_handle->control_session.ip));
+    memcpy (ctc_handle->control_session.ip, url + match[1].rm_so, match[1].rm_eo - match[1].rm_so);
+
+    /* port */
+    ctc_handle->control_session.port = (unsigned short)strtol (url + match[2].rm_so, NULL, 10);
+
+    regfree (&reg);
 
     return CTC_SUCCESS;
 
@@ -32,7 +56,7 @@ error:
     return CTC_FAILURE;
 }
 
-int alloc_ctc_handle (CTC_HANDLE** ctc_handle_p)
+int alloc_ctc_handle (CTC_HANDLE **ctc_handle_p)
 {
     int i;
 
@@ -60,7 +84,7 @@ error:
     return CTC_FAILURE;
 }
 
-int free_ctc_handle (CTC_HANDLE* ctc_handle)
+int free_ctc_handle (CTC_HANDLE *ctc_handle)
 {
 
     return CTC_SUCCESS;
@@ -70,7 +94,7 @@ error:
     return CTC_FAILURE;
 }
 
-int alloc_job_handle (CTC_HANDLE* ctc_handle, JOB_HANDLE** job_handle_p)
+int alloc_job_handle (CTC_HANDLE *ctc_handle, JOB_HANDLE **job_handle_p)
 {
     int i;
 
@@ -98,7 +122,7 @@ error:
     return CTC_FAILURE;
 }
 
-int free_job_handle (CTC_HANDLE* ctc_handle, JOB_HANDLE* job_handle)
+int free_job_handle (CTC_HANDLE *ctc_handle, JOB_HANDLE *job_handle)
 {
 
     return CTC_SUCCESS;
@@ -108,15 +132,15 @@ error:
     return CTC_FAILURE;
 }
 
-void set_conn_type (CTC_HANDLE* ctc_handle, CONN_TYPE conn_type)
+void set_conn_type (CTC_HANDLE *ctc_handle, CONN_TYPE conn_type)
 {
     ctc_handle->conn_type = conn_type;
 }
 
-int connect_server (CONN_TYPE conn_type, char* url, int* ctc_handle_id)
+int connect_server (CONN_TYPE conn_type, char *url, int *ctc_handle_id)
 {
-    CTC_HANDLE* ctc_handle;
-    JOB_HANDLE* job_handle;
+    CTC_HANDLE *ctc_handle;
+    JOB_HANDLE *job_handle;
 
     int state = 0;
 
@@ -131,14 +155,6 @@ int connect_server (CONN_TYPE conn_type, char* url, int* ctc_handle_id)
     {
         goto error;
     }
-
-    // cci:CUBRID:<host>:<port>:<db_name>:<db_user>:<db_password>:[?<properties>]
-    // // ex) cci:CUBRID:192.168.0.1:33000
-    // jdbc:cubrid:<host>:<port>:<db-name>:[user-id]:[password]:[?<property> [& <property>] ... ]
-    // ctc:cubrid:
-    //    ex) ctc:cubrid:ip:port
-    // parsing conn_str
-    // "cci:cubrid(-oracle|-mysql)?:([a-zA-Z_0-9\\.-]*):([0-9]*)
 
     if (IS_FAILURE (open_control_session (ctc_handle->control_session, conn_type)))
     {

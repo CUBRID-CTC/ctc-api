@@ -5,39 +5,54 @@
 #include <netinet/in.h>
 #include "ctc_network.h"
 
-int send_ctcp (CTCP_OP ctcp_op, int ctcp_op_param, CONTROL_SESSION* control_session, JOB_SESSION* job_session)
+int make_ctcp_header (CTCP_OP ctcp_op, int ctcp_op_param, CONTROL_SESSION *control_session, JOB_SESSION *job_session, CTCP_HEADER *ctcp_header)
 {
-    char ctcp_header[16];
-
-    memset (ctcp_header, 0, 16);
+    memset (ctcp_header, 0, sizeof (CTCP_HEADER));
 
     /* Operation ID */
-    memcpy (ctcp_header, &ctcp_op, 1);
+    ctcp_header->op = ctcp_op;
 
     /* Operation specific param */
-    memcpy (ctcp_header + 1, &ctcp_op_param, 1);
+    ctcp_header->op_param_or_result_code = ctcp_op_param;
 
+    /* Job descriptor */
     if (job_session != NULL)
     {
-        /* Job descriptor */
-        unsigned short job_desc;
-
-        job_desc = job_session->job_desc;
-
-        memcpy (ctcp_header + 2, job_desc, 2);
+        ctcp_header->job_desc = job_session->job_desc;
     }
 
-    if (control_session != NULL)
+    /* Session group ID */
+    if (control_session->session_gid != -1)
     {
-        /* Session group ID */
-        memcpy (ctcp_header + 4, control_session->session_gid);
+        ctcp_header->session_gid = control_session->session_gid;
     }
 
     /* Protocol version */
+    ctcp_header->version[0] = CTCP_MAJOR_VERSION;
+    ctcp_header->version[1] = CTCP_MINOR_VERSION;
+    ctcp_header->version[2] = CTCP_PATCH_VERSION;
+    ctcp_header->version[3] = CTCP_BUILD_VERSION;
 
+    /* etc */
 
+    return CTC_SUCCESS;
+}
 
+int send_ctcp (CTCP_OP ctcp_op, int ctcp_op_param, CONTROL_SESSION *control_session, JOB_SESSION *job_session)
+{
+    CTCP_HEADER ctcp_header;
+    int retval;
 
+    if (IS_FAILURE (make_ctcp_header (ctcp_op, ctcp_op_param, control_session, job_session, &ctcp_header)))
+    {
+        goto error;
+    }
+
+    retval = write (control_session->sockfd, &ctcp_header, sizeof (CTCP_HEADER));
+    if (retval == -1 || retval < sizeof (CTCP_HEADER))
+    {
+        goto error;
+    }
 
     return CTC_SUCCESS;
 
@@ -46,8 +61,52 @@ error:
     return CTC_FAILURE;
 }
 
-int recv_ctcp (CTCP_OP ctcp_op, CONTROL_SESSION* control_session, JOB_SESSION* job_session)
+int check_op_code (CTCP_OP ctcp_op, CTCP_HEADER *ctcp_header)
 {
+    ctcp_header->op == ctcp_op ? return CTC_SUCCESS : return CTC_FAILURE;
+}
+
+int check_result_code (CTCP_HEADER *ctcp_header)
+{
+
+}
+
+int recv_ctcp_header (CTCP_OP ctcp_op, CONTROL_SESSION *control_session, JOB_SESSION *job_session, CTCP_HEADER *ctcp_header)
+{
+    int retval;
+
+    retval = read (control_session->sockfd, ctcp_header, sizeof (CTCP_HEADER));
+    if (retval == -1 || retval < sizeof (CTCP_HEADER))
+    {
+        goto error;
+    }
+
+    if (IS_FAILURE (check_op_code (ctcp_op, ctcp_header)))
+    {
+        goto error;
+    }
+
+    if (IS_FAILURE (check_result_code (ctcp_header)))
+    {
+        goto error;
+    }
+
+    return CTC_SUCCESS;
+
+error:
+
+    return CTC_FAILURE;
+}
+
+int recv_ctcp (CTCP_OP ctcp_op, CONTROL_SESSION *control_session, JOB_SESSION *job_session)
+{
+    CTCP_HEADER ctcp_header;
+
+    if (IS_FAILURE (recv_ctcp_header (ctcp_op, control_session, job_session, &ctcp_header)))
+    {
+
+    }
+
     switch (ctcp_op)
     {
         case CTCP_CREATE_CONTROL_SESSION_RESULT:
@@ -94,7 +153,7 @@ error:
     return CTC_FAILURE;
 }
 
-int open_control_session (CONTROL_SESSION* control_session, int conn_type)
+int open_control_session (CONTROL_SESSION *control_session, int conn_type)
 {
     struct sockaddr_in server_addr;
 
@@ -106,15 +165,15 @@ int open_control_session (CONTROL_SESSION* control_session, int conn_type)
 
     memset (&server_addr, 0, sizeof (server_addr));
     server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = inet_addr (control_session->server_ip);
-    server_addr.sin_port = htons (control_session->server_port);
+    server_addr.sin_addr.s_addr = inet_addr (control_session->ip);
+    server_addr.sin_port = htons (control_session->port);
 
     if (IS_FAILURE (connect (control_session->sockfd, (struct sockaddr *)&server_addr, sizeof (server_addr))))
     {
         goto error;
     }
 
-    if (IS_FAILURE (send_ctcp (CTCP_CREATE_CONTROL_SESSION, conn_type, NULL, NULL)))
+    if (IS_FAILURE (send_ctcp (CTCP_CREATE_CONTROL_SESSION, conn_type, control_session, NULL)))
     {
         goto error;
     }
@@ -131,7 +190,7 @@ error:
     return CTC_FAILURE;
 }
 
-int close_control_session (CONTROL_SESSION* control_session)
+int close_control_session (CONTROL_SESSION *control_session)
 {
 
     return CTC_SUCCESS;

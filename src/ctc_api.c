@@ -1,6 +1,6 @@
 #include "ctc_core.h"
 
-int ctc_open_connection (int connection_type, char* connection_string)
+int ctc_open_connection (int connection_type, char *connection_string)
 {
     int ctc_handle_id;
 
@@ -53,13 +53,13 @@ int ctc_check_server_status (int ctc_handle)
     return CTC_SUCCESS;
 }
 
-int ctc_register_table (int ctc_handle, int job_descriptor, char* db_user_name, char* table_name)
+int ctc_register_table (int ctc_handle, int job_descriptor, char *db_user_name, char *table_name)
 {
 
     return CTC_SUCCESS;
 }
 
-int ctc_unregister_table (int ctc_handle, int job_descriptor, char* db_user_name, char* table_name)
+int ctc_unregister_table (int ctc_handle, int job_descriptor, char *db_user_name, char *table_name)
 {
 
     return CTC_SUCCESS;
@@ -77,7 +77,7 @@ int ctc_stop_capture (int ctc_handle, int job_descriptor)
     return CTC_SUCCESS;
 }
 
-int ctc_fetch_capture_transaction (int ctc_handle, int job_descriptor, char* result_buffer, int result_buffer_size, int* required_buffer_size)
+int ctc_fetch_capture_transaction (int ctc_handle, int job_descriptor, char *result_buffer, int result_buffer_size, int* required_buffer_size)
 {
 
     return CTC_SUCCESS;
