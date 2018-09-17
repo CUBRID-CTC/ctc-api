@@ -8,6 +8,8 @@
 #define CTCP_PATCH_VERSION 0
 #define CTCP_BUILD_VERSION 0
 
+#define MAX_DATA_PAYLOAD_SIZE 4080
+
 typedef enum ctcp_operation CTCP_OP;
 enum ctcp_operation
 {
@@ -64,7 +66,15 @@ struct ctcp_header
     unsigned short job_desc;
     int session_gid;
     char version[4];
-    int multi_purpose; /* job or server status, data length, job attribute value */
+    int header_data; /* job or server status, data length, job attribute value */
+};
+
+/* sizeof (CTCP) == 4096 bytes */
+typedef struct ctcp CTCP;
+struct ctcp
+{
+    CTCP_HEADER ctcp_header;
+    char ctcp_data[MAX_DATA_PAYLOAD_SIZE];
 };
 
 typedef struct job_session JOB_SESSION;

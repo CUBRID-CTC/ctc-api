@@ -8,5 +8,6 @@
 #define IS_FAILURE(a) (a != CTC_SUCCESS)
 
 #define IS_NULL(a) (a == NULL)
+#define IS_NOT_NULL(a) (a != NULL)
 
 #endif
