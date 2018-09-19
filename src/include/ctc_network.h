@@ -10,8 +10,8 @@
 
 #define MAX_DATA_PAYLOAD_SIZE 4080
 
-typedef enum ctcp_operation CTCP_OP;
-enum ctcp_operation
+typedef enum ctcp_operation_id CTCP_OP_ID;
+enum ctcp_operation_id
 {
     CTCP_CREATE_CONTROL_SESSION         = 0x01,
     CTCP_CREATE_CONTROL_SESSION_RESULT  = 0x02,
@@ -58,10 +58,35 @@ enum ctcp_result_code
     CTC_RC_FAILED_NOT_SUPPORTED_FILTER   = 0x50
 };
 
+typedef enum ctc_conn_type CTC_CONN_TYPE;
+enum ctc_conn_type
+{
+    CTC_CONN_TYPE_DEFAULT   = 0,
+    CTC_CONN_TYPE_CTRL_ONLY = 1
+};
+
+typedef enum ctc_server_status CTC_SERVER_STATUS;
+enum ctc_server_status
+{
+    CTC_SERVER_NOT_READY = 0,
+    CTC_SERVER_RUNNING   = 1,
+    CTC_SERVER_CLOSING   = 2
+};
+
+typedef enum job_status JOB_STATUS;
+enum job_status
+{
+    CTC_JOB_NONE           = 0,
+    CTC_JOB_WAITING        = 1,
+    CTC_JOB_PROCESSING     = 2,
+    CTC_JOB_READY_TO_FETCH = 3,
+    CTC_JOB_CLOSING        = 4
+};
+
 typedef struct ctcp_header CTCP_HEADER;
 struct ctcp_header
 {
-    char op;
+    char op_id;
     char op_param_or_result_code;
     unsigned short job_desc;
     int session_gid;
@@ -92,8 +117,10 @@ struct control_session
 
     int sockfd;
 
-    char ip[16];
-    unsigned short port;
+    CTC_CONN_TYPE conn_type;
+
+    char ip[16]; /* struct in_addr */
+    unsigned short port; /* htons, sin_port */
 };
 
 #endif
