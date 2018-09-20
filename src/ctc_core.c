@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <regex.h>
 #include "ctc_core.h"
 
@@ -52,6 +53,8 @@ error:
 
 int free_ctc_handle (CTC_HANDLE *ctc_handle)
 {
+    // 소켓 정리, 할당된 job 정리
+
     ctc_handle->control_session.session_gid = -1;
 
     return CTC_SUCCESS;
@@ -165,24 +168,11 @@ error:
     return CTC_FAILURE;
 }
 
-int connect_server (CTC_CONN_TYPE conn_type, char *url, int *ctc_handle_id)
+int connect_server (int conn_type, char *url, int *ctc_handle_id)
 {
     CTC_HANDLE *ctc_handle;
-    JOB_HANDLE *job_handle;
 
     int state = 0;
-
-    /* 타입 자체가 이미 두 값이 아니면 받을 수 없는데, api에서 int에 이상한 값 넣어줬을 때 동작 검사 */
-    if (conn_type != CTC_CONN_TYPE_DEFAULT &&
-        conn_type != CTC_CONN_TYPE_CTRL_ONLY)
-    {
-        goto error;
-    }
-
-    if (IS_NULL (url))
-    {
-        goto error;
-    }
 
     if (IS_FAILURE (alloc_ctc_handle (&ctc_handle)))
     {
@@ -196,7 +186,7 @@ int connect_server (CTC_CONN_TYPE conn_type, char *url, int *ctc_handle_id)
         goto error;
     }
 
-    if (IS_FAILURE (open_control_session (ctc_handle->control_session, conn_type)))
+    if (IS_FAILURE (open_control_session (&ctc_handle->control_session, conn_type)))
     {
         goto error;
     }
@@ -212,7 +202,7 @@ error:
     switch (state)
     {
         case 2:
-            close_control_session (ctc_handle->control_session);
+            close_control_session (&ctc_handle->control_session);
         case 1:
             free_ctc_handle (ctc_handle);
         default:
@@ -225,7 +215,6 @@ error:
 int disconnect_server (int ctc_handle_id)
 {
     CTC_HANDLE *ctc_handle;
-    JOB_HANDLE *job_handle;
 
     int state = 0;
 
@@ -236,7 +225,7 @@ int disconnect_server (int ctc_handle_id)
 
     state = 1;
 
-    if (IS_FAILURE (close_control_session (ctc_handle->control_session)))
+    if (IS_FAILURE (close_control_session (&ctc_handle->control_session)))
     {
         goto error;
     }
@@ -255,7 +244,7 @@ error:
     switch (state)
     {
         case 1:
-            close_control_session (ctc_handle->control_session);
+            close_control_session (&ctc_handle->control_session);
         case 2:
             free_ctc_handle (ctc_handle);
         default:
@@ -284,7 +273,7 @@ int add_job (int ctc_handle_id)
 
     state = 1;
 
-    if (IS_FAILURE (open_job_session (ctc_handle->control_session, job_handle->job_session)))
+    if (IS_FAILURE (open_job_session (&ctc_handle->control_session, &job_handle->job_session)))
     {
         goto error;
     }
@@ -298,7 +287,7 @@ error:
     switch (state)
     {
         case 2:
-            close_job_session (ctc_handle->control_session, job_handle->job_session);
+            close_job_session (&ctc_handle->control_session, &job_handle->job_session);
         case 1:
             free_job_handle (job_handle);
         default:
@@ -327,7 +316,7 @@ int delete_job (int ctc_handle_id, int job_handle_id)
 
     state = 1;
 
-    if (IS_FAILURE (close_job_session (ctc_handle->control_session, job_handle->job_session)))
+    if (IS_FAILURE (close_job_session (&ctc_handle->control_session, &job_handle->job_session)))
     {
         goto error;
     }
@@ -346,7 +335,7 @@ error:
     switch (state)
     {
         case 1:
-            close_job_session (ctc_handle->control_session, job_handle->job_session);
+            close_job_session (&ctc_handle->control_session, &job_handle->job_session);
         case 2:
             free_job_handle (job_handle);
         default:
@@ -359,14 +348,13 @@ error:
 int check_server_status (int ctc_handle_id, int *server_status)
 {
     CTC_HANDLE *ctc_handle;
-    //CTC_SERVER_STATUS server_status = CTC_SERVER_NOT_READY;
 
     if (IS_FAILURE (find_ctc_handle (ctc_handle_id, &ctc_handle)))
     {
         goto error;
     }
 
-    if (IS_FAILURE (get_server_status (ctc_handle->control_session, &server_status)))
+    if (IS_FAILURE (get_server_status (&ctc_handle->control_session, server_status)))
     {
         goto error;
     }
@@ -393,7 +381,7 @@ int register_table (int ctc_handle_id, int job_handle_id, char *db_user, char *t
         goto error;
     }
 
-    if (IS_FAILURE (register_table_to_job (ctc_handle->control_session, job_handle->job_session, db_user, table_name)))
+    if (IS_FAILURE (register_table_to_job (&ctc_handle->control_session, &job_handle->job_session, db_user, table_name)))
     {
         goto error;
     }
@@ -420,7 +408,7 @@ int unregister_table (int ctc_handle_id, int job_handle_id, char *db_user, char 
         goto error;
     }
 
-    if (IS_FAILURE (unregister_table_from_job (ctc_handle->control_session, job_handle->job_session, db_user, table_name)))
+    if (IS_FAILURE (unregister_table_from_job (&ctc_handle->control_session, &job_handle->job_session, db_user, table_name)))
     {
         goto error;
     }
@@ -447,7 +435,7 @@ int check_job_status (int ctc_handle_id, int job_handle_id, int *job_status)
         goto error;
     }
 
-    if (IS_FAILURE (get_job_status (ctc_handle->control_session, job_status)))
+    if (IS_FAILURE (get_job_status (&ctc_handle->control_session, &job_handle->job_session, job_status)))
     {
         goto error;
     }

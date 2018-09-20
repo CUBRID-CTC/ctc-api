@@ -6,6 +6,17 @@ int ctc_open_connection (int connection_type, char *connection_string)
 
     pthread_once (&ctc_api_once_init, ctc_api_init);
 
+    if (connection_type != CTC_CONN_TYPE_DEFAULT &&
+        connection_type != CTC_CONN_TYPE_CTRL_ONLY)
+    {
+        goto error;
+    }
+
+    if (IS_NULL (connection_string))
+    {
+        goto error;
+    }
+
     if (IS_FAILURE (connect_server (connection_type, connection_string, &ctc_handle)))
     {
         goto error;
@@ -62,6 +73,11 @@ error:
 
 int ctc_check_server_status (int ctc_handle, int *server_status)
 {
+    if (IS_NULL (server_status))
+    {
+        goto error;
+    }
+
     if (IS_FAILURE (check_server_status (ctc_handle, server_status)))
     {
         goto error;
@@ -132,6 +148,11 @@ int ctc_fetch_capture_transaction (int ctc_handle, int job_descriptor, char *res
 
 int ctc_check_job_status (int ctc_handle, int job_descriptor, int *job_status)
 {
+    if (IS_NULL (job_status))
+    {
+        goto error;
+    }
+
     if (IS_FAILURE (check_job_status (ctc_handle, job_descriptor, job_status)))
     {
         goto error;

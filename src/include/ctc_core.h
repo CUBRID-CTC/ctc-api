@@ -29,6 +29,13 @@ struct ctc_handle
 extern pthread_once_t ctc_api_once_init;
 
 void ctc_api_init (void);
-int connect_server (CTC_CONN_TYPE, char *, int *);
+int connect_server (int conn_type, char *url, int *ctc_handle_id);
+int disconnect_server (int ctc_handle_id);
+int add_job (int ctc_handle_id);
+int delete_job (int ctc_handle_id, int job_handle_id);
+int check_server_status (int ctc_handle_id, int *server_status);
+int register_table (int ctc_handle_id, int job_handle_id, char *db_user, char *table_name);
+int unregister_table (int ctc_handle_id, int job_handle_id, char *db_user, char *table_name);
+int check_job_status (int ctc_handle_id, int job_handle_id, int *job_status);
 
 #endif
