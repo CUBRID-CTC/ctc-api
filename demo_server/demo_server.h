@@ -11,11 +11,11 @@
 
 #define MAX_DATA_PAYLOAD_SIZE 4080
 
-enum bool
+typedef enum
 {
     false = 0,
     true  = 1
-};
+} bool;
 
 enum ctcp_operation_id
 {
@@ -70,6 +70,12 @@ enum ctc_conn_type
     CTC_CONN_TYPE_CTRL_ONLY = 1
 };
 
+enum ctc_close_condition
+{
+    CTC_QUIT_JOB_IMMEDIATELY       = 0,
+    CTC_QUIT_JOB_AFTER_TRANSACTION = 1
+};
+
 enum ctc_server_status
 {
     CTC_SERVER_NOT_READY = 0,
@@ -116,21 +122,21 @@ struct job
      *   - true: use
      *   - false: unuse
      */
-    int is_use;
+    bool is_use;
 
     /*
      * 캡쳐 데이터 전송 진행 여부
      *   - true: demo_server --> ctc api로 임의의 데이터 스트림 전송 중
      *   - false: 전송 없음
      */
-    int is_capture_start;
+    bool is_capture_start;
 
     /*
      * job thread 종료 조건
      *   - true: 쓰레드 종료
      *   - false: 계속 쓰레드 수행
      */
-    int is_stop;
+    bool is_job_thread_stop;
 
     int job_sockfd;
 
@@ -141,6 +147,13 @@ typedef struct session_group SESSION_GROUP;
 struct session_group
 {
     int session_gid;
+
+    /*
+     * 자료구조 사용 여부
+     *   - true: use
+     *   - false: unuse
+     */
+    bool is_use;
 
     int conn_type;
 

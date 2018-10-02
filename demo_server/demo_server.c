@@ -8,6 +8,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 #include <unistd.h>
 #include <pthread.h>
 #include "demo_server.h"
@@ -15,35 +16,50 @@
 #define PRINT_ERR_LOG() do { printf ("[ERROR] %s () at %s:%d\n", __func__, __FILE__, __LINE__); } while (0)
 
 SESSION_GROUP session_group_arr[MAX_SESSION_GROUP_COUNT];
-int next_session_gid = 0;
+int next_alloc_pos = 0;
 
-int execute_server (int listen_port, int max_client);
-int execute_service (int service_fd);
-int execute_service_ctrl_session (int ctrl_fd, SESSION_GROUP *session_group, int *is_finish);
-int execute_service_job_session (int service_fd);
+// capture start 시 설정된 횟수 만큼 packet (4K) 쏘고 1초 쉰다.
+// 해당 횟수 만큼 보내고 job thread 상태 확인 후 sleep (1초) 
+int packet_count_at_once = 0;
+
+// capture start 시 설정된 횟수 만큼 데이터 보낸다.
+// 0 이면 cature stop 전까지 계속 보낸다.
+// 총 보내는 횟수는 packet_count_at_once * send_count
+int send_count = 0;
+
+int execute_server (unsigned short listen_port);
+int process_client_request (int service_fd);
+int process_control_session_request (SESSION_GROUP *session_group, bool *is_finish);
 int process_CREATE_CONTROL_SESSION (CTCP_HEADER *ctcp_header, int service_fd);
+int process_DESTROY_CONTROL_SESSION (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_group);
 int process_CREATE_JOB_SESSION (CTCP_HEADER *ctcp_header, int service_fd);
+int process_DESTROY_JOB_SESSION (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_group);
+int process_REQUEST_JOB_STATUS (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_group);
+int process_REQUEST_SERVER_STATUS (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_group);
+int process_REGISTER_TABLE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_group);
+int process_UNREGISTER_TABLE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_group);
+int process_START_CAPTURE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_group);
+int process_STOP_CAPTURE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_group);
 
 void usage ()
 {
-    printf ("demo_server [PORT] [MAX_CLIENT] [LIFE_TIME]\n");
-    printf ("ex) ./demo_server 20000 32 60\n");
+    printf ("== USAGE ==\n");
+    printf ("demo_server [PORT] [PACKET_COUNT_AT_ONCE] [SEND_COUNT]\n");
+    printf ("ex) ./demo_server 20000 10 60\n\n");
 }
 
 int main (int argc, char *argv[])
 {
     int listen_port;
-    int max_client;
-    int life_time;
+    int i;
 
-    if (argc < 3)
+    if (argc < 4)
     {
         usage ();
         exit (1);
     }
 
     listen_port = atoi (argv[1]);
-    max_client = atoi (argv[2]);
 
     if (listen_port > 65535)
     {
@@ -51,15 +67,31 @@ int main (int argc, char *argv[])
         goto error;
     }
 
-    if (max_client > MAX_SESSION_GROUP_COUNT)
+    packet_count_at_once = atoi (argv[2]);
+
+    if (packet_count_at_once <= 0)
     {
         PRINT_ERR_LOG ();
         goto error;
     }
 
+    send_count = atoi (argv[3]);
+
+    if (send_count < 0)
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
+
+    for (i = 0; i < MAX_SESSION_GROUP_COUNT; i ++)
+    {
+        session_group_arr[i].is_use = false;
+        session_group_arr[i].session_gid = i + 100; // session group id ==> 편의상 100 부터 할당 
+    }
+
     printf ("demo_server start\n");
 
-    if (-1 == execute_server (listen_port, max_client))
+    if (-1 == execute_server (listen_port))
     {
         PRINT_ERR_LOG ();
         goto error;
@@ -71,12 +103,15 @@ int main (int argc, char *argv[])
 
 error:
 
+    printf ("demo_server stop with error\n");
+
     return -1;
 }
 
-int execute_server (int listen_port, int max_client)
+int execute_server (unsigned short listen_port)
 {
     int listen_fd, service_fd;
+    int max_client;
     int addr_len;
     struct sockaddr_in server_addr, client_addr;
 
@@ -99,14 +134,15 @@ int execute_server (int listen_port, int max_client)
         goto error;
     }
 
+    max_client = MAX_SESSION_GROUP_COUNT;
+
     if (listen (listen_fd, max_client) < 0)
     {
         PRINT_ERR_LOG ();
         goto error;
     }
 
-    // demo_server 이기 때문에 max_client 까지만 서비스하고 종료
-    while (max_client)
+    while (true)
     {
         addr_len = sizeof (client_addr);
 
@@ -117,13 +153,19 @@ int execute_server (int listen_port, int max_client)
             goto error;
         }
 
-        if (-1 == execute_service (service_fd))
+        // client IP / Port 출력
+        printf ("== CLIENT INFO ==\n");
+        printf ("[IP]   ==> %s\n", inet_ntoa (client_addr.sin_addr));
+        printf ("[Port] ==> %d\n\n", ntohs (client_addr.sin_port));
+
+        // 다음 두 개의 프로토콜만 올 수 있다.
+        // - CTCP_CREATE_CONTROL_SESSION
+        // - CTCP_CREATE_JOB_SESSION
+        if (-1 == process_client_request (service_fd))
         {
             PRINT_ERR_LOG ();
             goto error;
         }
-
-        max_client --;
     }
 
     close (listen_fd);
@@ -136,7 +178,7 @@ error:
 }
 
 // server의 listen 소켓 요청 처리 함수
-int execute_service (int service_fd)
+int process_client_request (int service_fd)
 {
     CTCP_HEADER ctcp_header;
     int retval;
@@ -148,9 +190,9 @@ int execute_service (int service_fd)
         goto error;
     }
 
-// listen 소켓으로 요청 받는 프로토콜은 총 11개 중 2개 뿐이다.
-// 1) CTCP_CREATE_CONTROL_SESSION
-// 2) CTCP_CREATE_JOB_SESSION
+    // listen 소켓으로 요청 받는 프로토콜은 총 11개 중 2개 뿐이다.
+    // 1) CTCP_CREATE_CONTROL_SESSION
+    // 2) CTCP_CREATE_JOB_SESSION
     switch (ctcp_header.op_id)
     {
         case CTCP_CREATE_CONTROL_SESSION:
@@ -194,12 +236,14 @@ error:
 }
 
 // control session으로 요청받는 프로토콜 처리
-int execute_service_ctrl_session (int ctrl_fd, SESSION_GROUP *session_group, int *is_finish)
+int process_control_session_request (SESSION_GROUP *session_group, bool *is_finish)
 {
     CTCP_HEADER ctcp_header;
     int retval;
 
-    retval = read (ctrl_fd, &ctcp_header, sizeof (ctcp_header));
+    // demo_server라 요청을 무한 대기하도록 하였음.
+    // 테스트 중 문제가 있다면, select () or poll () 사용
+    retval = read (session_group->ctrl_sockfd, &ctcp_header, sizeof (ctcp_header));
     if (retval == -1 || retval < sizeof (ctcp_header))
     {
         PRINT_ERR_LOG ();
@@ -209,8 +253,13 @@ int execute_service_ctrl_session (int ctrl_fd, SESSION_GROUP *session_group, int
     switch (ctcp_header.op_id)
     {
         case CTCP_DESTROY_CONTROL_SESSION:
+            if (-1 == process_DESTROY_CONTROL_SESSION (&ctcp_header, session_group))
+            {
+                PRINT_ERR_LOG ();
+                goto error;
+            }
 
-            *is_finish = 1;
+            *is_finish = true;
 
             break;
         case CTCP_DESTROY_JOB_SESSION:
@@ -255,85 +304,25 @@ int execute_service_ctrl_session (int ctrl_fd, SESSION_GROUP *session_group, int
             break;
 
         case CTCP_START_CAPTURE:
-
-            break;
-        case CTCP_STOP_CAPTURE:
-
-            break;
-
-        case CTCP_CREATE_CONTROL_SESSION:
-        case CTCP_CREATE_JOB_SESSION:
-        case CTCP_SET_JOB_ATTRIBUTE:
-        default:
-            PRINT_ERR_LOG ();
-            goto error;
-    }
-
-    return 0;
-
-error:
-
-    return -1;
-}
-
-int execute_service_job_session (int service_fd)
-{
-    CTCP_HEADER ctcp_header;
-    int retval;
-
-    retval = read (service_fd, &ctcp_header, sizeof (ctcp_header));
-    if (retval == -1 || retval < sizeof (ctcp_header))
-    {
-        PRINT_ERR_LOG ();
-        goto error;
-    }
-
-    switch (ctcp_header.op_id)
-    {
-        case CTCP_CREATE_CONTROL_SESSION:
-            if (-1 == process_CREATE_CONTROL_SESSION (&ctcp_header, service_fd))
+            if (-1 == process_START_CAPTURE (&ctcp_header, session_group))
             {
                 PRINT_ERR_LOG ();
                 goto error;
             }
 
             break;
-        case CTCP_DESTROY_CONTROL_SESSION:
-
-            break;
-        case CTCP_CREATE_JOB_SESSION:
-            // job 생성 요청은 구현 상의 이슈로 listen_socket 으로 처리
-            if (-1 == process_CREATE_JOB_SESSION (&ctcp_header, service_fd))
+        case CTCP_STOP_CAPTURE:
+            if (-1 == process_STOP_CAPTURE (&ctcp_header, session_group))
             {
                 PRINT_ERR_LOG ();
                 goto error;
             }
 
             break;
-        case CTCP_DESTROY_JOB_SESSION:
 
-            break;
-        case CTCP_REQUEST_JOB_STATUS:
-
-            break;
-        case CTCP_REQUEST_SERVER_STATUS:
-
-            break;
-        case CTCP_REGISTER_TABLE:
-
-            break;
-        case CTCP_UNREGISTER_TABLE:
-
-            break;
+        case CTCP_CREATE_CONTROL_SESSION:
+        case CTCP_CREATE_JOB_SESSION:
         case CTCP_SET_JOB_ATTRIBUTE:
-
-            break;
-        case CTCP_START_CAPTURE:
-
-            break;
-        case CTCP_STOP_CAPTURE:
-
-            break;
         default:
             PRINT_ERR_LOG ();
             goto error;
@@ -372,47 +361,77 @@ void make_version_info (CTCP_HEADER *ctcp_header)
     ctcp_header->version[3] = CTCP_BUILD_VERSION;
 }
 
+// control session 의 요청사항을 처리하는 쓰레드
 void *execute_control_thread (void *sess_group)
 {
     SESSION_GROUP *session_group = sess_group;
-    CTCP_HEADER ctcp_header;
+    CTCP_HEADER ctcp_header_result;
 
-    int is_finish = 0;
+    bool is_finish = false;
 
     /* send CTCP_CREATE_CONTROL_SESSION_RESULT */
-    ctcp_header.op_id = CTCP_CREATE_CONTROL_SESSION_RESULT;
-    ctcp_header.op_param_or_result_code = CTC_RC_SUCCESS;
-    ctcp_header.job_desc = 0;
-    ctcp_header.session_gid = session_group->session_gid;
+    ctcp_header_result.op_id = CTCP_CREATE_CONTROL_SESSION_RESULT;
+    ctcp_header_result.op_param_or_result_code = CTC_RC_SUCCESS;
+    ctcp_header_result.job_desc = 0;
+    ctcp_header_result.session_gid = session_group->session_gid;
 
-    make_version_info (&ctcp_header);
+    make_version_info (&ctcp_header_result);
 
-    if (-1 == write (session_group->ctrl_sockfd, &ctcp_header, sizeof (ctcp_header)))
+    if (-1 == write (session_group->ctrl_sockfd, &ctcp_header_result, sizeof (ctcp_header_result)))
     {
         PRINT_ERR_LOG ();
         goto error;
     }
 
-    while (1)
+    while (is_finish != true)
     {
         // control session 으로 요청 받을 수 있는 ctcp 대기
-        if (-1 == execute_service_ctrl_session (session_group->ctrl_sockfd, session_group, &is_finish))
+        if (-1 == process_control_session_request (session_group, &is_finish))
         {
             PRINT_ERR_LOG ();
             goto error;
-        }
-
-        if (is_finish == 1)
-        {
-            break;
         }
     }
 
     // job 정리가 필요하면 여기서
 
+    close (session_group->ctrl_sockfd);
+    
+    // 전역 배열에 대한 처리라 위험할 수 있지만 next_alloc_pos 전역변수로 최대한 회피하는 전략
+    session_group->is_use = false;
+    
     pthread_exit (NULL);
 
 error:
+
+    close (session_group->ctrl_sockfd);
+
+    session_group->is_use = false;
+
+    pthread_exit (NULL);
+}
+
+void *execute_job_thread (void *job_p)
+{
+    JOB *job = job_p;
+
+    job->is_capture_start = true;
+
+    while (1)
+    {
+        if (job->is_job_thread_stop == true)
+        {
+            break;
+        }
+    }
+
+    close (job->job_sockfd);
+
+    pthread_exit (NULL);
+
+error:
+
+    close (job->job_sockfd);
 
     pthread_exit (NULL);
 }
@@ -420,14 +439,8 @@ error:
 int process_CREATE_CONTROL_SESSION (CTCP_HEADER *ctcp_header, int service_fd)
 {
     SESSION_GROUP *session_group;
+    CTCP_HEADER ctcp_header_result;
     int i;
-
-    // 여러 클라이언트 동시 접속 처리하려면 공유 변수 사용시 뮤텍스 처리
-    if (next_session_gid >= MAX_SESSION_GROUP_COUNT)
-    {
-        PRINT_ERR_LOG ();
-        goto error;
-    }
 
     // CTCP_CREATE_CONTROL_SESSION 프로토콜 검사
     if (ctcp_header->op_param_or_result_code != CTC_CONN_TYPE_DEFAULT &&
@@ -461,20 +474,43 @@ int process_CREATE_CONTROL_SESSION (CTCP_HEADER *ctcp_header, int service_fd)
         goto error;
     }
 
+    session_group = NULL;
+
     // session_group 할당
-    session_group = &session_group_arr[next_session_gid];
+    // next_alloc_pos 전역 변수로 전역 배열의 동시성 충돌 최대한 회피
+    for (i = 0; i < MAX_SESSION_GROUP_COUNT; i ++)
+    {
+        if (next_alloc_pos >= MAX_SESSION_GROUP_COUNT)
+        {
+            next_alloc_pos = 0;
+        }
 
-    session_group->session_gid = next_session_gid;
+        if (session_group_arr[next_alloc_pos].is_use == false)
+        {
+            session_group = &session_group_arr[next_alloc_pos];
+            session_group->is_use = true;
 
-    next_session_gid ++;
+            next_alloc_pos ++;
+
+            break;
+        }
+
+        next_alloc_pos ++;
+    }
+
+    if (session_group == NULL)
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
 
     session_group->conn_type = ctcp_header->op_param_or_result_code;
 
     // job 배열 초기화
     for (i = 0; i < MAX_JOB_COUNT; i ++)
     {
-        session_group->job[i].is_use = 0;
-        session_group->job[i].job_desc = i;
+        session_group->job[i].is_use = false;
+        session_group->job[i].job_desc = i + 300; // 편의상 job descriptor는 300 부터 할당
     }
 
     session_group->ctrl_sockfd = service_fd;
@@ -486,6 +522,8 @@ int process_CREATE_CONTROL_SESSION (CTCP_HEADER *ctcp_header, int service_fd)
         goto error;
     }
 
+    // CTCP_DESTROY_CONTROL_SESSION 프로토콜이control_thread의 control session 으로 요청되기에,
+    // main thread에서 join 타이밍 잡기 어렵다.
     if (0 != pthread_detach (session_group->control_thread))
     {
         PRINT_ERR_LOG ();
@@ -496,63 +534,91 @@ int process_CREATE_CONTROL_SESSION (CTCP_HEADER *ctcp_header, int service_fd)
 
 error:
 
+    /* 실패 시 실패 프로토콜 전송 */
+    /* send CTCP_CREATE_CONTROL_SESSION_RESULT with ERROR */
+    ctcp_header_result.op_id = CTCP_CREATE_CONTROL_SESSION_RESULT;
+    ctcp_header_result.op_param_or_result_code = CTC_RC_FAILED;
+    ctcp_header_result.job_desc = 0;
+    ctcp_header_result.session_gid = 0;
+
+    make_version_info (&ctcp_header_result);
+
+    ctcp_header_result.header_data = 0;
+
+    write (service_fd, &ctcp_header_result, sizeof (ctcp_header_result));
+
+    close (service_fd);
+
     return -1;
 }
 
-    /*
-       typedef struct ctcp_header CTCP_HEADER;
-       struct ctcp_header
-       {
-       unsigned char op_id;
-       char op_param_or_result_code;
-       unsigned short job_desc;
-       int session_gid;
-       char version[4];gg
-       int header_data;
-       */
-void *execute_job_thread (void *job_p)
+int process_DESTROY_CONTROL_SESSION (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_group)
 {
-    JOB *job = job_p;
-    CTCP_HEADER ctcp_header;
+    CTCP_HEADER ctcp_header_result;
 
-    // send CTCP_CREATE_JOB_SESSION_RESULT
-    ctcp_header.op_id = CTCP_CREATE_CONTROL_SESSION_RESULT;
-    ctcp_header.op_param_or_result_code = CTC_RC_SUCCESS;
-    ctcp_header.job_desc = job->job_desc;
-    ctcp_header.session_gid = job->session_gid;
-
-    make_version_info (&ctcp_header);
-
-    if (-1 == write (job->job_sockfd, &ctcp_header, sizeof (ctcp_header)))
+    if (ctcp_header->op_param_or_result_code != 0)
     {
         PRINT_ERR_LOG ();
         goto error;
     }
 
-    while (1)
+    if (ctcp_header->job_desc != 0)
     {
-        // control session으로 CTCP_START_CAPTURE 받을 때 까지 할 일 없다.
-        // 일단 demo_server 니깐 flag로 처리하고 추후 테스트시 문제가 되면 condition value 나 기타 다른 방법 강구
-        if (job->is_capture_start == 1)
-        {
-
-        }
-
-        if (job->is_stop == 1)
-        {
-            break;
-        }
-
-        sleep (1);
+        PRINT_ERR_LOG ();
+        goto error;
     }
 
-    pthread_exit (NULL);
+    if (ctcp_header->session_gid != session_group->session_gid)
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
+
+    if (-1 == check_version_info (ctcp_header))
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
+
+    if (ctcp_header->header_data != 0)
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
+
+    // send CTCP_DESTROY_CONTROL_SESSION_RESULT
+    ctcp_header_result.op_id = CTCP_DESTROY_CONTROL_SESSION_RESULT;
+    ctcp_header_result.op_param_or_result_code = CTC_RC_SUCCESS;
+    ctcp_header_result.job_desc = 0;
+    ctcp_header_result.session_gid = session_group->session_gid;
+
+    make_version_info (&ctcp_header_result);
+
+    ctcp_header_result.header_data = 0;
+
+    if (-1 == write (session_group->ctrl_sockfd, &ctcp_header_result, sizeof (ctcp_header_result)))
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
+  
+    return 0;
 
 error:
 
-    job->is_use = 0;
+    // send CTCP_DESTROY_CONTROL_SESSION_RESULT with error
+    ctcp_header_result.op_id = CTCP_DESTROY_CONTROL_SESSION_RESULT;
+    ctcp_header_result.op_param_or_result_code = CTC_RC_FAILED_SESSION_CLOSE;
+    ctcp_header_result.job_desc = 0;
+    ctcp_header_result.session_gid = session_group->session_gid;
 
-    pthread_exit (NULL);
+    make_version_info (&ctcp_header_result);
+
+    ctcp_header_result.header_data = 0;
+
+    write (session_group->ctrl_sockfd, &ctcp_header_result, sizeof (ctcp_header_result));
+
+    return -1;
 }
 
 int process_CREATE_JOB_SESSION (CTCP_HEADER *ctcp_header, int service_fd)
@@ -560,6 +626,7 @@ int process_CREATE_JOB_SESSION (CTCP_HEADER *ctcp_header, int service_fd)
     SESSION_GROUP *session_group;
     JOB *job;
     int i;
+    CTCP_HEADER ctcp_header_result;
 
     // CTCP_CREATE_JOB_SESSION 프로토콜 검사
     if (ctcp_header->op_param_or_result_code != 0)
@@ -592,17 +659,26 @@ int process_CREATE_JOB_SESSION (CTCP_HEADER *ctcp_header, int service_fd)
         goto error;
     }
 
+    // session_group 찾고
     session_group = &session_group_arr[ctcp_header->session_gid];
+
+    if (session_group->is_use != true)
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
 
     // 클라이언트가 job 단위로 쓰레드를 돌리지 않는 이상 동시성 제어 불필요
     job = NULL;
 
     for (i = 0; i < MAX_JOB_COUNT; i ++)
     {
-        if (session_group->job[i].is_use == 0)
+        if (session_group->job[i].is_use == false)
         {
             job = &session_group->job[i];
-            session_group->job[i].is_use = 1;
+            session_group->job[i].is_use = true;
+
+            break;
         }
     }
 
@@ -616,11 +692,17 @@ int process_CREATE_JOB_SESSION (CTCP_HEADER *ctcp_header, int service_fd)
 
     job->job_sockfd = service_fd;
 
-    job->is_capture_start = 0;
-    job->is_stop = 0;
+    /* send CTCP_CREATE_JOB_SESSION_RESULT */
+    ctcp_header_result.op_id = CTCP_CREATE_JOB_SESSION_RESULT;
+    ctcp_header_result.op_param_or_result_code = CTC_RC_SUCCESS;
+    ctcp_header_result.job_desc = job->job_desc;
+    ctcp_header_result.session_gid = job->session_gid;
 
-    // job session 요청을 처리하는 쓰레드 생성
-    if (0 != pthread_create (&job->job_thread, NULL, execute_job_thread, (void *)job))
+    make_version_info (&ctcp_header_result);
+
+    ctcp_header_result.header_data = 0;
+
+    if (-1 == write (service_fd, &ctcp_header_result, sizeof (ctcp_header_result)))
     {
         PRINT_ERR_LOG ();
         goto error;
@@ -629,6 +711,21 @@ int process_CREATE_JOB_SESSION (CTCP_HEADER *ctcp_header, int service_fd)
     return 0;
 
 error:
+
+    /* 실패 시 실패 프로토콜 전송 */
+    /* send CTCP_CREATE_JOB_SESSION_RESULT with ERROR */
+    ctcp_header_result.op_id = CTCP_CREATE_JOB_SESSION_RESULT;
+    ctcp_header_result.op_param_or_result_code = CTC_RC_FAILED_NO_MORE_JOB_ALLOWED;
+    ctcp_header_result.job_desc = 0;
+    ctcp_header_result.session_gid = ctcp_header->session_gid;
+
+    make_version_info (&ctcp_header_result);
+
+    ctcp_header_result.header_data = 0;
+
+    write (service_fd, &ctcp_header_result, sizeof (ctcp_header_result));
+
+    close (service_fd);
 
     return -1;
 }
@@ -672,16 +769,7 @@ int process_DESTROY_JOB_SESSION (CTCP_HEADER *ctcp_header, SESSION_GROUP *sessio
     // get job
     job = &session_group->job[ctcp_header->job_desc];
 
-    if (job->is_use != 1)
-    {
-        PRINT_ERR_LOG ();
-        goto error;
-    }
-
-    job->is_capture_start = 0;
-    job->is_stop = 1;
-
-    if (0 != pthread_join (job->job_thread, NULL))
+    if (job->is_use != false)
     {
         PRINT_ERR_LOG ();
         goto error;
@@ -703,11 +791,34 @@ int process_DESTROY_JOB_SESSION (CTCP_HEADER *ctcp_header, SESSION_GROUP *sessio
         goto error;
     }
 
-    job->is_use = 0;
+    job->is_capture_start = false;
+    job->is_job_thread_stop = true;
+
+    if (0 != pthread_join (job->job_thread, NULL))
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
+
+    job->is_use = false;
   
     return 0;
 
 error:
+
+    // send CTCP_DESTROY_JOB_SESSION_RESULT with error
+    ctcp_header_result.op_id = CTCP_DESTROY_JOB_SESSION_RESULT;
+    ctcp_header_result.op_param_or_result_code = CTC_RC_FAILED_INVALID_HANDLE;
+    ctcp_header_result.job_desc = ctcp_header->job_desc;
+    ctcp_header_result.session_gid = ctcp_header->session_gid;
+
+    make_version_info (&ctcp_header_result);
+
+    ctcp_header_result.header_data = 0;
+
+    write (session_group->ctrl_sockfd, &ctcp_header_result, sizeof (ctcp_header_result));
+
+    job->is_use = false;
 
     return -1;
 }
@@ -751,7 +862,7 @@ int process_REQUEST_JOB_STATUS (CTCP_HEADER *ctcp_header, SESSION_GROUP *session
     // get job
     job = &session_group->job[ctcp_header->job_desc];
 
-    if (job->is_use != 1)
+    if (job->is_use != true)
     {
         PRINT_ERR_LOG ();
         goto error;
@@ -767,7 +878,7 @@ int process_REQUEST_JOB_STATUS (CTCP_HEADER *ctcp_header, SESSION_GROUP *session
 
     // demo_server 이기 때문에 api 사용자가 start_capture를 호출한 경우 무조건 job에 읽을 데이터가 있다고 알려주고,
     // start_capture를 호출하지 않은 경우 그냥 waiting 상태라고 알려주자.
-    if (job->is_capture_start == 1)
+    if (job->is_capture_start == true)
     {
         ctcp_header_result.header_data = 3; /* CTC_JOB_READY_TO_FETCH */
     }
@@ -785,6 +896,18 @@ int process_REQUEST_JOB_STATUS (CTCP_HEADER *ctcp_header, SESSION_GROUP *session
     return 0;
 
 error:
+
+    // send CTCP_REQUEST_JOB_STATUS_RESULT with error
+    ctcp_header_result.op_id = CTCP_REQUEST_JOB_STATUS_RESULT;
+    ctcp_header_result.op_param_or_result_code = CTC_RC_FAILED_INVALID_HANDLE;
+    ctcp_header_result.job_desc = ctcp_header->job_desc;
+    ctcp_header_result.session_gid = ctcp_header->session_gid;
+
+    make_version_info (&ctcp_header_result);
+
+    ctcp_header_result.header_data = 0;
+
+    write (session_group->ctrl_sockfd, &ctcp_header_result, sizeof (ctcp_header_result));
 
     return -1;
 }
@@ -831,7 +954,7 @@ int process_REQUEST_SERVER_STATUS (CTCP_HEADER *ctcp_header, SESSION_GROUP *sess
 
     make_version_info (&ctcp_header_result);
 
-    // 서버는 항상 수행 중
+    // demo_server의 경우 서버는 항상 수행 중
     ctcp_header_result.header_data = 1; /* CTC_SERVER_RUNNING */
 
     if (-1 == write (session_group->ctrl_sockfd, &ctcp_header_result, sizeof (ctcp_header_result)))
@@ -844,6 +967,18 @@ int process_REQUEST_SERVER_STATUS (CTCP_HEADER *ctcp_header, SESSION_GROUP *sess
 
 error:
 
+    // send CTCP_REQUEST_SERVER_STATUS_RESULT with error
+    ctcp_header_result.op_id = CTCP_REQUEST_SERVER_STATUS_RESULT;
+    ctcp_header_result.op_param_or_result_code = CTC_RC_FAILED_INVALID_HANDLE;
+    ctcp_header_result.job_desc = 0;
+    ctcp_header_result.session_gid = ctcp_header->session_gid;
+
+    make_version_info (&ctcp_header_result);
+
+    ctcp_header_result.header_data = 0;
+
+    write (session_group->ctrl_sockfd, &ctcp_header_result, sizeof (ctcp_header_result));
+
     return -1;
 }
 
@@ -854,8 +989,12 @@ int process_REGISTER_TABLE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_gro
 
     int data_len;
     int retval;
-    char data_buffer[1024];
+    char data_buffer[4096];
 
+    int user_name_len;
+    char user_name[1024];
+    int table_name_len;
+    char table_name[1024];
 
     if (ctcp_header->op_param_or_result_code != 0)
     {
@@ -890,13 +1029,35 @@ int process_REGISTER_TABLE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_gro
     }
 
     retval = read (session_group->ctrl_sockfd, data_buffer, data_len);
+    if (retval == -1 || retval != data_len)
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
+
+    // user name
+    memcpy (&user_name_len, data_buffer, sizeof (int));
+    snprintf (user_name, user_name_len + 1, "%s", data_buffer + sizeof (int));
+
+    // table name
+    memcpy (&table_name_len, data_buffer + sizeof (int) + user_name_len, sizeof (int));
+    snprintf (table_name, table_name_len + 1, "%s", data_buffer + sizeof (int) + user_name_len + sizeof (int));
+
+    if (sizeof (int) + user_name_len + sizeof (int) + table_name_len != data_len)
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
 
     /* 사용자 명, 테이블 명 읽을 필요가 있다면 여기서 처리 */
+    printf ("== REGISTER TABLE INFO ==\n");
+    printf ("user_name ==> %s, length ==> %d\n", user_name, user_name_len);
+    printf ("table_name ==> %s, length ==> %d\n\n", table_name, table_name_len);
 
     // get job
     job = &session_group->job[ctcp_header->job_desc];
 
-    if (job->is_use != 1)
+    if (job->is_use != true)
     {
         PRINT_ERR_LOG ();
         goto error;
@@ -922,6 +1083,18 @@ int process_REGISTER_TABLE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_gro
 
 error:
 
+    // send CTCP_REGISTER_TABLE_RESULT with error
+    ctcp_header_result.op_id = CTCP_REGISTER_TABLE_RESULT;
+    ctcp_header_result.op_param_or_result_code = CTC_RC_FAILED_INVALID_HANDLE;
+    ctcp_header_result.job_desc = ctcp_header->job_desc;
+    ctcp_header_result.session_gid = ctcp_header->session_gid;
+
+    make_version_info (&ctcp_header_result);
+
+    ctcp_header_result.header_data = 0;
+
+    write (session_group->ctrl_sockfd, &ctcp_header_result, sizeof (ctcp_header_result));
+
     return -1;
 }
 
@@ -932,7 +1105,12 @@ int process_UNREGISTER_TABLE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_g
 
     int data_len;
     int retval;
-    char data_buffer[1024];
+    char data_buffer[4096];
+
+    int user_name_len;
+    char user_name[1024];
+    int table_name_len;
+    char table_name[1024];
 
     if (ctcp_header->op_param_or_result_code != 0)
     {
@@ -967,13 +1145,35 @@ int process_UNREGISTER_TABLE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_g
     }
 
     retval = read (session_group->ctrl_sockfd, data_buffer, data_len);
+    if (retval == -1 || retval != data_len)
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
+
+    // user name
+    memcpy (&user_name_len, data_buffer, sizeof (int));
+    snprintf (user_name, user_name_len + 1, "%s", data_buffer + sizeof (int));
+
+    // table name
+    memcpy (&table_name_len, data_buffer + sizeof (int) + user_name_len, sizeof (int));
+    snprintf (table_name, table_name_len + 1, "%s", data_buffer + sizeof (int) + user_name_len + sizeof (int));
+
+    if (sizeof (int) + user_name_len + sizeof (int) + table_name_len != data_len)
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
 
     /* 사용자 명, 테이블 명 읽을 필요가 있다면 여기서 처리 */
+    printf ("== UNREGISTER TABLE INFO ==\n");
+    printf ("user_name ==> %s, length ==> %d\n", user_name, user_name_len);
+    printf ("table_name ==> %s, length ==> %d\n\n", table_name, table_name_len);
 
     // get job
     job = &session_group->job[ctcp_header->job_desc];
 
-    if (job->is_use != 1)
+    if (job->is_use != true)
     {
         PRINT_ERR_LOG ();
         goto error;
@@ -998,6 +1198,186 @@ int process_UNREGISTER_TABLE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_g
     return 0;
 
 error:
+
+    // send CTCP_UNREGISTER_TABLE_RESULT with error
+    ctcp_header_result.op_id = CTCP_UNREGISTER_TABLE_RESULT;
+    ctcp_header_result.op_param_or_result_code = CTC_RC_FAILED_INVALID_HANDLE;
+    ctcp_header_result.job_desc = ctcp_header->job_desc;
+    ctcp_header_result.session_gid = ctcp_header->session_gid;
+
+    make_version_info (&ctcp_header_result);
+
+    ctcp_header_result.header_data = 0;
+
+    write (session_group->ctrl_sockfd, &ctcp_header_result, sizeof (ctcp_header_result));
+
+    return -1;
+}
+
+int process_START_CAPTURE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_group)
+{
+    CTCP_HEADER ctcp_header_result;
+    JOB *job = NULL;
+
+    if (ctcp_header->op_param_or_result_code != 0)
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
+
+    // get job desc later
+    if (ctcp_header->job_desc >= MAX_JOB_COUNT)
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
+
+    if (ctcp_header->session_gid != session_group->session_gid)
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
+
+    if (-1 == check_version_info (ctcp_header))
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
+
+    if (ctcp_header->header_data != 0)
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
+
+    // get job
+    job = &session_group->job[ctcp_header->job_desc];
+
+    if (job->is_use != true)
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
+
+    // send CTCP_START_CAPTURE_RESULT
+    // 이 놈의 경우 job_thread에서 보내준다.
+
+    // capture data를 전송하는 job 쓰레드 생성
+    if (0 != pthread_create (&job->job_thread, NULL, execute_job_thread, (void *)job))
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
+
+    return 0;
+
+error:
+
+    // send CTCP_STOP_CAPTURE_RESULT with error
+    ctcp_header_result.op_id = CTCP_STOP_CAPTURE_RESULT;
+    ctcp_header_result.op_param_or_result_code = CTC_RC_FAILED_INVALID_HANDLE;
+    ctcp_header_result.job_desc = ctcp_header->job_desc;
+    ctcp_header_result.session_gid = ctcp_header->session_gid;
+
+    make_version_info (&ctcp_header_result);
+
+    ctcp_header_result.header_data = 0;
+
+    write (session_group->ctrl_sockfd, &ctcp_header_result, sizeof (ctcp_header_result));
+
+    session_group->job[ctcp_header->job_desc].is_job_thread_stop = true;
+
+    return -1;
+}
+
+int process_STOP_CAPTURE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_group)
+{
+    CTCP_HEADER ctcp_header_result;
+    JOB *job = NULL;
+
+    if (ctcp_header->op_param_or_result_code != CTC_QUIT_JOB_IMMEDIATELY ||
+        ctcp_header->op_param_or_result_code != CTC_QUIT_JOB_AFTER_TRANSACTION)
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
+
+    // get job desc later
+    if (ctcp_header->job_desc >= MAX_JOB_COUNT)
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
+
+    if (ctcp_header->session_gid != session_group->session_gid)
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
+
+    if (-1 == check_version_info (ctcp_header))
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
+
+    if (ctcp_header->header_data != 0)
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
+
+    // get job
+    job = &session_group->job[ctcp_header->job_desc];
+
+    if (job->is_use != true)
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
+
+    // send CTCP_STOP_CAPTURE_RESULT
+    ctcp_header_result.op_id = CTCP_STOP_CAPTURE_RESULT;
+    ctcp_header_result.op_param_or_result_code = CTC_RC_SUCCESS;
+    ctcp_header_result.job_desc = 0;
+    ctcp_header_result.session_gid = session_group->session_gid;
+
+    make_version_info (&ctcp_header_result);
+
+    ctcp_header_result.header_data = 0;
+
+    if (-1 == write (session_group->ctrl_sockfd, &ctcp_header_result, sizeof (ctcp_header_result)))
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
+
+    job->is_capture_start = false;
+    job->is_job_thread_stop = true;
+
+    if (0 != pthread_join (job->job_thread, NULL))
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
+  
+    return 0;
+
+error:
+
+    // send CTCP_STOP_CAPTURE_RESULT with error
+    ctcp_header_result.op_id = CTCP_STOP_CAPTURE_RESULT;
+    ctcp_header_result.op_param_or_result_code = CTC_RC_FAILED_INVALID_HANDLE;
+    ctcp_header_result.job_desc = ctcp_header->job_desc;
+    ctcp_header_result.session_gid = ctcp_header->session_gid;
+
+    make_version_info (&ctcp_header_result);
+
+    ctcp_header_result.header_data = 0;
+
+    write (session_group->ctrl_sockfd, &ctcp_header_result, sizeof (ctcp_header_result));
+
+    session_group->job[ctcp_header->job_desc].is_job_thread_stop = true;
 
     return -1;
 }
