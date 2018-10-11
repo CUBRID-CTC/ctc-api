@@ -22,11 +22,15 @@ int next_alloc_pos = 0;
 // 해당 횟수 만큼 보내고 job thread 상태 확인 후 sleep (1초) 
 int packet_count_at_once = 0;
 
-// capture start 시 설정된 횟수 만큼 데이터 보낸다.
+// capture start 시 설정된 횟수 만큼 데이터(4K * packet_count_at_once) 보낸다.
 // 0 이면 cature stop 전까지 계속 보낸다.
 // 총 보내는 횟수는 packet_count_at_once * send_count
 int send_count = 0;
 
+// data_payload 하나 만들어두고 같은 놈을 계속 전송하자
+char data_payload[MAX_DATA_PAYLOAD_SIZE];
+
+int make_data_payload (void);
 int execute_server (unsigned short listen_port);
 int process_client_request (int service_fd);
 int process_control_session_request (SESSION_GROUP *session_group, bool *is_finish);
@@ -87,6 +91,13 @@ int main (int argc, char *argv[])
     {
         session_group_arr[i].is_use = false;
         session_group_arr[i].session_gid = i + 100; // session group id ==> 편의상 100 부터 할당 
+    }
+
+    // demo_server라 data_payload 미리 만들어두고 공유
+    if (-1 == make_data_payload ())
+    {
+        PRINT_ERR_LOG ();
+        goto error;
     }
 
     printf ("demo_server start\n");
@@ -411,19 +422,162 @@ error:
     pthread_exit (NULL);
 }
 
+// i : 1 , u : 2, d : 3, c : 4
+
+
+// capture start 시 설정된 횟수 만큼 packet (4K) 쏘고 1초 쉰다.
+// 해당 횟수 만큼 보내고 job thread 상태 확인 후 sleep (1초) 
+//int packet_count_at_once = 0;
+
+// capture start 시 설정된 횟수 만큼 데이터(4K * packet_count_at_once) 보낸다.
+// 0 이면 cature stop 전까지 계속 보낸다.
+// 총 보내는 횟수는 packet_count_at_once * send_count
+// int send_count = 0;
+/*
+typedef struct ctcp CTCP;
+struct ctcp
+{
+    CTCP_HEADER header;
+    char data_payload[MAX_DATA_PAYLOAD_SIZE];
+};
+*/
+
+int make_data_payload (void)
+{
+    char *where;
+    ITEM item; // 한 ITEM 크기는 100 byte 이고, data_payload 부분에 40개의 ITEM이 들어갈 수 있다.
+    int num_of_items;
+
+    int i;
+
+    item.tx_id = 777;
+    item.lsa = 888;
+
+    item.user_name_len = 4;
+    memcpy (item.user_name, "dba1", 4);
+
+    item.table_name_len = 4;
+    memcpy (item.table_name, "tbl1", 4);
+
+    item.stmt_type = 1; // insert 고정
+
+    item.attr_num = 3;
+
+    item.attr_name_len_1 = 8;
+    memcpy (item.attr_name_1, "c1111111", 8);
+    item.attr_val_len_1 = 8;
+    memcpy (item.attr_val_1, "11111111", 8);
+
+    item.attr_name_len_2 = 8;
+    memcpy (item.attr_name_2, "c2222222", 8);
+    item.attr_val_len_2 = 8;
+    memcpy (item.attr_val_2, "22222222", 8);
+
+    item.attr_name_len_3 = 8;
+    memcpy (item.attr_name_3, "c3333333", 8);
+    item.attr_val_len_3 = 8;
+    memcpy (item.attr_val_3, "33333333", 8);
+
+    num_of_items = 40;
+    where = data_payload; // data_payload는 전역변수
+
+    memcpy (where, &num_of_items, 4);
+    where = where + 4;
+
+    for (i=0; i<40; i++)
+    {
+        memcpy (where, &item, 100);
+        where = where + 100;
+    }
+}
+
+int send_captured_data (JOB* job)
+{
+    int packet_send_count = packet_count_at_once; // 4k 패킷을 이 횟수만큼 전송
+    CTCP ctcp;
+    CTCP_HEADER *ctcp_header_result = &ctcp.header;
+
+    while (packet_send_count)
+    {
+        ctcp_header_result->op_id = CTCP_START_CAPTURE_RESULT;
+
+        if (packet_send_count == 1) // 전송 packet이 하나 남았으면
+        {
+            ctcp_header_result->op_param_or_result_code = CTC_RC_SUCCESS;
+        }
+        else
+        {
+            ctcp_header_result->op_param_or_result_code = CTC_RC_SUCCESS_FRAGMENTED;
+        }
+
+        ctcp_header_result->job_desc = job->job_desc;
+        ctcp_header_result->session_gid = job->session_gid;
+
+        make_version_info (ctcp_header_result);
+
+        // 하드 코딩해라
+        ctcp_header_result->header_data = 4004; // 4080 - 76 = 4004 byte
+
+        memcpy (ctcp.data_payload, data_payload, 4004);
+
+        if (-1 == write (job->job_sockfd, &ctcp, sizeof (ctcp)))
+        {
+            PRINT_ERR_LOG ();
+            goto error;
+        }
+
+        packet_send_count --;
+    }
+
+    return 0;
+
+error:
+
+    return -1;
+}
+
 void *execute_job_thread (void *job_p)
 {
     JOB *job = job_p;
+    int data_send_count = 0;
+
+    if (send_count == 0)
+    {
+        data_send_count = -1; // 무한으로 데이터 전송
+    }
+    else
+    {
+        data_send_count = send_count;
+    }
 
     job->is_capture_start = true;
 
-    while (1)
+    while (job->is_capture_start == true && job->is_job_thread_stop == false)
     {
-        if (job->is_job_thread_stop == true)
+        if (-1 == send_captured_data (job))
+        {
+            PRINT_ERR_LOG ();
+            goto error;
+        }
+
+        if (data_send_count == -1)
+        {
+            // 무한 전송이라 감소시킬 필요 없다.
+        }
+        else
+        {
+            data_send_count --;
+        }
+
+        if (data_send_count == 0)
         {
             break;
         }
+
+        sleep (1);
     }
+
+    // 전송의 끝임을 알려야
 
     close (job->job_sockfd);
 
@@ -1381,3 +1535,4 @@ error:
 
     return -1;
 }
+

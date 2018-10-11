@@ -111,6 +111,69 @@ struct ctcp
     char data_payload[MAX_DATA_PAYLOAD_SIZE];
 };
 
+    // data_payload 크기는 4080 (MAX_DATA_PAYLOAD_SIZE)
+    // 고정 크기
+    // The number of items     : 4 byte ==> 39개
+    // Transaction ID          : 4 byte ==> job_desc + 500
+    // LSA                     : 4 byte ==> 7
+    // User name length        : 4 byte ==> 4
+    // User name value         : 4 byte ==> "dba1" 로 고정
+    // Table name length       : 4 byte ==> 4
+    // Table name value        : 4 byte ==> "tbl1" 로 고정
+    // Statement type          : 2 byte ==> 1 (insert) 으로 고정, 아직 정의되어 있지 않음
+    // The number of attribute : 2 byte ==> 3개로 고정
+    // ================= 아래 부분 3번 반복 =======================
+    // Attribute name length   : 4 byte ==> 8
+    // Attribute name value    : 8 byte ==> "c1234567" 으로 고정
+    // Attribute value length  : 4 byte ==> 8
+    // Attribute value         : 8 byte ==> "12345678" 로 고정
+    // ------------------------------------------------------------
+    //                         : 24 byte
+    //                      ==> 3 번 반복 24 byte * 3
+    // ============================================================
+    // --------------------------------------------------------
+    //           one item size : 104 byte
+    // 4080 byte / 104 byte = 39.xxx
+    // 1 packet에는 39의 item이 들어갈 수 있다.
+    //
+
+// 한 item의 크기 ==> 100byte
+// data payload 총 크기는 4080
+// 여기서 the number of items (아이템 몇 개인지) 4 byte 빼면,
+// 4076
+// 4076 / 100 ==> 40개의 item이 들어갈 수 있고, 76 byte 남는다.
+typedef struct item ITEM;
+struct item
+{
+    // 총 크기 100
+    int tx_id;
+    int lsa;
+    int user_name_len; // 4로 고정
+    char user_name[4]; // "dba1"로 고정
+    int table_name_len; // 4로 고정
+    char table_name[4]; // "tbl1"로 고정
+
+
+    short stmt_type; // 1, insert 로 고정
+
+    short attr_num;  // 3개
+
+    int attr_name_len_1; // 8
+    char attr_name_1[8]; // "c1111117" 으로 고정
+    int attr_val_len_1; // 8
+    char attr_val_1[8]; // "11141118" 로 고정
+    
+    int attr_name_len_2; // 8
+    char attr_name_2[8]; // "c2222227" 으로 고정
+    int attr_val_len_2; // 8
+    char attr_val_2[8]; // "22242228" 로 고정
+
+    int attr_name_len_3; // 8
+    char attr_name_3[8]; // "c3333337" 으로 고정
+    int attr_val_len_3; // 8
+    char attr_val_3[8]; // "33343338" 로 고정
+};
+
 typedef struct job JOB;
 struct job
 {
