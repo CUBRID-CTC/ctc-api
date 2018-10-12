@@ -394,6 +394,8 @@ void *execute_control_thread (void *sess_group)
         goto error;
     }
 
+    printf ("[send] [session_gid: %d] CTCP_CREATE_CONTROL_SESSION_RESULT\n", session_group->session_gid);
+
     while (is_finish != true)
     {
         // control session 으로 요청 받을 수 있는 ctcp 대기
@@ -496,6 +498,7 @@ int send_captured_data (JOB* job)
     int packet_send_count = packet_count_at_once; // 4k 패킷을 이 횟수만큼 전송
     CTCP ctcp;
     CTCP_HEADER *ctcp_header_result = &ctcp.header;
+    int send_count = 1;
 
     while (packet_send_count)
     {
@@ -526,6 +529,8 @@ int send_captured_data (JOB* job)
             goto error;
         }
 
+        printf("[send (%d)] [session_gid: %d, job_desc: %d] CTCP_START_CAPTURE_RESULT\n", send_count++, job->session_gid, job->job_desc);
+
         packet_send_count --;
     }
 
@@ -551,22 +556,26 @@ void *execute_job_thread (void *job_p)
     }
 
     job->is_capture_start = true;
+    job->is_job_thread_stop = false;
 
-    while (job->is_capture_start == true && job->is_job_thread_stop == false)
+    while (job->is_job_thread_stop == false)
     {
-        if (-1 == send_captured_data (job))
+        if (job->is_capture_start == true)
         {
-            PRINT_ERR_LOG ();
-            goto error;
-        }
+            if (-1 == send_captured_data (job))
+            {
+                PRINT_ERR_LOG ();
+                goto error;
+            }
 
-        if (data_send_count == -1)
-        {
-            // 무한 전송이라 감소시킬 필요 없다.
-        }
-        else
-        {
-            data_send_count --;
+            if (data_send_count == -1)
+            {
+                // 무한 전송이라 감소시킬 필요 없다.
+            }
+            else
+            {
+                data_send_count --;
+            }
         }
 
         if (data_send_count == 0)
@@ -628,6 +637,8 @@ int process_CREATE_CONTROL_SESSION (CTCP_HEADER *ctcp_header, int service_fd)
         goto error;
     }
 
+    printf ("[recv] CTCP_CREATE_CONTROL_SESSION\n");
+
     session_group = NULL;
 
     // session_group 할당
@@ -664,6 +675,7 @@ int process_CREATE_CONTROL_SESSION (CTCP_HEADER *ctcp_header, int service_fd)
     for (i = 0; i < MAX_JOB_COUNT; i ++)
     {
         session_group->job[i].is_use = false;
+        session_group->job[i].is_job_thread_stop = true;
         session_group->job[i].job_desc = i + 300; // 편의상 job descriptor는 300 부터 할당
     }
 
@@ -740,6 +752,8 @@ int process_DESTROY_CONTROL_SESSION (CTCP_HEADER *ctcp_header, SESSION_GROUP *se
         goto error;
     }
 
+    printf ("[recv] CTCP_DESTROY_CONTROL_SESSION\n");
+
     // send CTCP_DESTROY_CONTROL_SESSION_RESULT
     ctcp_header_result.op_id = CTCP_DESTROY_CONTROL_SESSION_RESULT;
     ctcp_header_result.op_param_or_result_code = CTC_RC_SUCCESS;
@@ -755,6 +769,8 @@ int process_DESTROY_CONTROL_SESSION (CTCP_HEADER *ctcp_header, SESSION_GROUP *se
         PRINT_ERR_LOG ();
         goto error;
     }
+
+    printf ("[send] CTCP_DESTROY_CONTROL_SESSION_RESULT\n");
   
     return 0;
 
@@ -795,7 +811,8 @@ int process_CREATE_JOB_SESSION (CTCP_HEADER *ctcp_header, int service_fd)
         goto error;
     }
 
-    if (ctcp_header->session_gid < 0 || ctcp_header->session_gid >= MAX_SESSION_GROUP_COUNT)
+    // demo_server 에서 session_gid를 100 부터 부여함
+    if (ctcp_header->session_gid < 100 || ctcp_header->session_gid >= (MAX_SESSION_GROUP_COUNT + 100))
     {
         PRINT_ERR_LOG ();
         goto error;
@@ -814,13 +831,15 @@ int process_CREATE_JOB_SESSION (CTCP_HEADER *ctcp_header, int service_fd)
     }
 
     // session_group 찾고
-    session_group = &session_group_arr[ctcp_header->session_gid];
+    session_group = &session_group_arr[ctcp_header->session_gid-100];
 
     if (session_group->is_use != true)
     {
         PRINT_ERR_LOG ();
         goto error;
     }
+
+    printf ("[recv] CTCP_CREATE_JOB_SESSION\n");
 
     // 클라이언트가 job 단위로 쓰레드를 돌리지 않는 이상 동시성 제어 불필요
     job = NULL;
@@ -830,7 +849,7 @@ int process_CREATE_JOB_SESSION (CTCP_HEADER *ctcp_header, int service_fd)
         if (session_group->job[i].is_use == false)
         {
             job = &session_group->job[i];
-            session_group->job[i].is_use = true;
+            job->is_use = true;
 
             break;
         }
@@ -862,6 +881,8 @@ int process_CREATE_JOB_SESSION (CTCP_HEADER *ctcp_header, int service_fd)
         goto error;
     }
 
+    printf ("[send][job_desc: %d] CTCP_CREATE_JOB_SESSION_RESULT\n", job->job_desc);
+
     return 0;
 
 error:
@@ -888,6 +909,7 @@ int process_DESTROY_JOB_SESSION (CTCP_HEADER *ctcp_header, SESSION_GROUP *sessio
 {
     JOB *job;
     CTCP_HEADER ctcp_header_result;
+    void *status;
 
     if (ctcp_header->op_param_or_result_code != 0)
     {
@@ -896,7 +918,7 @@ int process_DESTROY_JOB_SESSION (CTCP_HEADER *ctcp_header, SESSION_GROUP *sessio
     }
 
     // get job desc later
-    if (ctcp_header->job_desc >= MAX_JOB_COUNT)
+    if (ctcp_header->job_desc >= (MAX_JOB_COUNT + 300))
     {
         PRINT_ERR_LOG ();
         goto error;
@@ -920,10 +942,12 @@ int process_DESTROY_JOB_SESSION (CTCP_HEADER *ctcp_header, SESSION_GROUP *sessio
         goto error;
     }
 
-    // get job
-    job = &session_group->job[ctcp_header->job_desc];
+    printf ("[recv] CTCP_DESTROY_JOB_SESSION\n");
 
-    if (job->is_use != false)
+    // get job
+    job = &session_group->job[ctcp_header->job_desc-300];
+
+    if (job->is_use != true)
     {
         PRINT_ERR_LOG ();
         goto error;
@@ -945,13 +969,19 @@ int process_DESTROY_JOB_SESSION (CTCP_HEADER *ctcp_header, SESSION_GROUP *sessio
         goto error;
     }
 
-    job->is_capture_start = false;
-    job->is_job_thread_stop = true;
+    printf ("[send] CTCP_DESTROY_JOB_SESSION_RESULT\n");
 
-    if (0 != pthread_join (job->job_thread, NULL))
+    job->is_capture_start = false;
+
+    if (job->is_job_thread_stop == false)
     {
-        PRINT_ERR_LOG ();
-        goto error;
+        job->is_job_thread_stop = true;
+
+        if (0 != pthread_join (job->job_thread, &status))
+        {
+            PRINT_ERR_LOG ();
+            goto error;
+        }
     }
 
     job->is_use = false;
@@ -989,7 +1019,7 @@ int process_REQUEST_JOB_STATUS (CTCP_HEADER *ctcp_header, SESSION_GROUP *session
     }
 
     // get job desc later
-    if (ctcp_header->job_desc >= MAX_JOB_COUNT)
+    if (ctcp_header->job_desc >= (MAX_JOB_COUNT + 300))
     {
         PRINT_ERR_LOG ();
         goto error;
@@ -1013,8 +1043,10 @@ int process_REQUEST_JOB_STATUS (CTCP_HEADER *ctcp_header, SESSION_GROUP *session
         goto error;
     }
 
+    printf ("[recv] CTCP_REQUEST_JOB_STATUS\n");
+
     // get job
-    job = &session_group->job[ctcp_header->job_desc];
+    job = &session_group->job[ctcp_header->job_desc-300];
 
     if (job->is_use != true)
     {
@@ -1046,6 +1078,8 @@ int process_REQUEST_JOB_STATUS (CTCP_HEADER *ctcp_header, SESSION_GROUP *session
         PRINT_ERR_LOG ();
         goto error;
     }
+
+    printf ("[recv] CTCP_REQUEST_JOB_STATUS_RESULT\n");
   
     return 0;
 
@@ -1100,6 +1134,8 @@ int process_REQUEST_SERVER_STATUS (CTCP_HEADER *ctcp_header, SESSION_GROUP *sess
         goto error;
     }
 
+    printf ("[recv] CTCP_REQUEST_SERVER_STATUS\n");
+
     // send CTCP_REQUEST_SERVER_STATUS_RESULT
     ctcp_header_result.op_id = CTCP_REQUEST_SERVER_STATUS_RESULT;
     ctcp_header_result.op_param_or_result_code = CTC_RC_SUCCESS;
@@ -1117,6 +1153,8 @@ int process_REQUEST_SERVER_STATUS (CTCP_HEADER *ctcp_header, SESSION_GROUP *sess
         goto error;
     }
   
+    printf ("[send] CTCP_REQUEST_SERVER_STATUS_RESULT\n");
+
     return 0;
 
 error:
@@ -1150,6 +1188,8 @@ int process_REGISTER_TABLE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_gro
     int table_name_len;
     char table_name[1024];
 
+    char *read_pos;
+
     if (ctcp_header->op_param_or_result_code != 0)
     {
         PRINT_ERR_LOG ();
@@ -1157,7 +1197,7 @@ int process_REGISTER_TABLE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_gro
     }
 
     // get job desc later
-    if (ctcp_header->job_desc >= MAX_JOB_COUNT)
+    if (ctcp_header->job_desc >= (MAX_JOB_COUNT + 300))
     {
         PRINT_ERR_LOG ();
         goto error;
@@ -1189,13 +1229,24 @@ int process_REGISTER_TABLE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_gro
         goto error;
     }
 
+    printf ("[recv] CTCP_REGISTER_TABLE\n");
+
+    read_pos = data_buffer;
+
     // user name
-    memcpy (&user_name_len, data_buffer, sizeof (int));
-    snprintf (user_name, user_name_len + 1, "%s", data_buffer + sizeof (int));
+    memcpy (&user_name_len, read_pos, sizeof (int));
+    read_pos += sizeof (int);
+
+    memcpy (user_name, read_pos, user_name_len);
+    user_name[user_name_len] = '\0';
+    read_pos += user_name_len;
 
     // table name
-    memcpy (&table_name_len, data_buffer + sizeof (int) + user_name_len, sizeof (int));
-    snprintf (table_name, table_name_len + 1, "%s", data_buffer + sizeof (int) + user_name_len + sizeof (int));
+    memcpy (&table_name_len, read_pos, sizeof (int));
+    read_pos += sizeof (int);
+
+    memcpy (table_name, read_pos, table_name_len);
+    table_name[table_name_len] = '\0';
 
     if (sizeof (int) + user_name_len + sizeof (int) + table_name_len != data_len)
     {
@@ -1209,7 +1260,7 @@ int process_REGISTER_TABLE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_gro
     printf ("table_name ==> %s, length ==> %d\n\n", table_name, table_name_len);
 
     // get job
-    job = &session_group->job[ctcp_header->job_desc];
+    job = &session_group->job[ctcp_header->job_desc-300];
 
     if (job->is_use != true)
     {
@@ -1233,6 +1284,8 @@ int process_REGISTER_TABLE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_gro
         goto error;
     }
   
+    printf ("[send] CTCP_REGISTER_TABLE_RESULT\n");
+
     return 0;
 
 error:
@@ -1266,6 +1319,8 @@ int process_UNREGISTER_TABLE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_g
     int table_name_len;
     char table_name[1024];
 
+    char *read_pos;
+
     if (ctcp_header->op_param_or_result_code != 0)
     {
         PRINT_ERR_LOG ();
@@ -1273,7 +1328,7 @@ int process_UNREGISTER_TABLE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_g
     }
 
     // get job desc later
-    if (ctcp_header->job_desc >= MAX_JOB_COUNT)
+    if (ctcp_header->job_desc >= (MAX_JOB_COUNT + 300))
     {
         PRINT_ERR_LOG ();
         goto error;
@@ -1305,13 +1360,24 @@ int process_UNREGISTER_TABLE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_g
         goto error;
     }
 
+    printf ("[recv] CTCP_UNREGISTER_TABLE\n");
+
+    read_pos = data_buffer;
+
     // user name
-    memcpy (&user_name_len, data_buffer, sizeof (int));
-    snprintf (user_name, user_name_len + 1, "%s", data_buffer + sizeof (int));
+    memcpy (&user_name_len, read_pos, sizeof (int));
+    read_pos += sizeof (int);
+
+    memcpy (user_name, read_pos, user_name_len);
+    user_name[user_name_len] = '\0';
+    read_pos += user_name_len;
 
     // table name
-    memcpy (&table_name_len, data_buffer + sizeof (int) + user_name_len, sizeof (int));
-    snprintf (table_name, table_name_len + 1, "%s", data_buffer + sizeof (int) + user_name_len + sizeof (int));
+    memcpy (&table_name_len, read_pos, sizeof (int));
+    read_pos += sizeof (int);
+
+    memcpy (table_name, read_pos, table_name_len);
+    table_name[table_name_len] = '\0';
 
     if (sizeof (int) + user_name_len + sizeof (int) + table_name_len != data_len)
     {
@@ -1325,7 +1391,7 @@ int process_UNREGISTER_TABLE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_g
     printf ("table_name ==> %s, length ==> %d\n\n", table_name, table_name_len);
 
     // get job
-    job = &session_group->job[ctcp_header->job_desc];
+    job = &session_group->job[ctcp_header->job_desc-300];
 
     if (job->is_use != true)
     {
@@ -1349,6 +1415,8 @@ int process_UNREGISTER_TABLE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_g
         goto error;
     }
   
+    printf ("[send] CTCP_UNREGISTER_TABLE_RESULT\n");
+
     return 0;
 
 error:
@@ -1380,7 +1448,7 @@ int process_START_CAPTURE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_grou
     }
 
     // get job desc later
-    if (ctcp_header->job_desc >= MAX_JOB_COUNT)
+    if (ctcp_header->job_desc >= (MAX_JOB_COUNT + 300))
     {
         PRINT_ERR_LOG ();
         goto error;
@@ -1404,8 +1472,10 @@ int process_START_CAPTURE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_grou
         goto error;
     }
 
+    printf("[recv] CTCP_START_CAPTURE\n");
+
     // get job
-    job = &session_group->job[ctcp_header->job_desc];
+    job = &session_group->job[ctcp_header->job_desc-300];
 
     if (job->is_use != true)
     {
@@ -1439,7 +1509,7 @@ error:
 
     write (session_group->ctrl_sockfd, &ctcp_header_result, sizeof (ctcp_header_result));
 
-    session_group->job[ctcp_header->job_desc].is_job_thread_stop = true;
+    session_group->job[ctcp_header->job_desc-300].is_job_thread_stop = true;
 
     return -1;
 }
@@ -1449,6 +1519,8 @@ int process_STOP_CAPTURE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_group
     CTCP_HEADER ctcp_header_result;
     JOB *job = NULL;
 
+    void *status;
+
     if (ctcp_header->op_param_or_result_code != CTC_QUIT_JOB_IMMEDIATELY ||
         ctcp_header->op_param_or_result_code != CTC_QUIT_JOB_AFTER_TRANSACTION)
     {
@@ -1457,7 +1529,7 @@ int process_STOP_CAPTURE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_group
     }
 
     // get job desc later
-    if (ctcp_header->job_desc >= MAX_JOB_COUNT)
+    if (ctcp_header->job_desc >= (MAX_JOB_COUNT + 300))
     {
         PRINT_ERR_LOG ();
         goto error;
@@ -1481,8 +1553,10 @@ int process_STOP_CAPTURE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_group
         goto error;
     }
 
+    printf ("[recv] CTCP_STOP_CAPTURE\n");
+
     // get job
-    job = &session_group->job[ctcp_header->job_desc];
+    job = &session_group->job[ctcp_header->job_desc-300];
 
     if (job->is_use != true)
     {
@@ -1506,13 +1580,19 @@ int process_STOP_CAPTURE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_group
         goto error;
     }
 
-    job->is_capture_start = false;
-    job->is_job_thread_stop = true;
+    printf ("[send] CTCP_STOP_CAPTURE_RESULT\n");
 
-    if (0 != pthread_join (job->job_thread, NULL))
+    job->is_capture_start = false;
+
+    if (job->is_job_thread_stop == false)
     {
-        PRINT_ERR_LOG ();
-        goto error;
+        job->is_job_thread_stop = true;
+
+        if (0 != pthread_join (job->job_thread, &status))
+        {
+            PRINT_ERR_LOG ();
+            goto error;
+        }
     }
   
     return 0;
@@ -1531,7 +1611,7 @@ error:
 
     write (session_group->ctrl_sockfd, &ctcp_header_result, sizeof (ctcp_header_result));
 
-    session_group->job[ctcp_header->job_desc].is_job_thread_stop = true;
+    session_group->job[ctcp_header->job_desc-300].is_job_thread_stop = true;
 
     return -1;
 }
