@@ -488,18 +488,37 @@ error:
     return CTC_FAILURE;
 }
 
-int make_send_data (char *db_user, char *table_name, char *data_buffer, int buffer_size)
+int make_send_data (char *user_name, char *table_name, char *data_buffer, int buffer_size, int *data_len)
 {
     int data_size;
+    int user_name_len;
+    int table_name_len;
+    char *write_pos;
 
-    data_size = sizeof (int) + strlen (db_user) + sizeof (int) + strlen (table_name);
+    user_name_len  = strlen (user_name);
+    table_name_len = strlen (table_name);
 
-    if (data_size >= buffer_size)
+    data_size = sizeof (int) + user_name_len + sizeof (int) + table_name_len;
+
+    if (data_size > buffer_size)
     {
         goto error;
     }
 
-    snprintf (data_buffer, buffer_size, "%d%s%d%s", (int)strlen (db_user), db_user, (int)strlen (table_name), table_name);
+    write_pos = data_buffer;
+
+    memcpy (write_pos, &user_name_len, sizeof (int));
+    write_pos += sizeof (int);
+
+    memcpy (write_pos, user_name, user_name_len);
+    write_pos += user_name_len;
+
+    memcpy (write_pos, &table_name_len, sizeof (int));
+    write_pos += sizeof (int);
+
+    memcpy (write_pos, table_name, table_name_len);
+
+    *data_len = data_size;
 
     return CTC_SUCCESS;
 
@@ -508,16 +527,17 @@ error:
     return CTC_FAILURE;
 }
 
-int register_table_to_job (CONTROL_SESSION *control_session, JOB_SESSION *job_session, char *db_user, char *table_name)
+int register_table_to_job (CONTROL_SESSION *control_session, JOB_SESSION *job_session, char *user_name, char *table_name)
 {
-    char data[MAX_DATA_PAYLOAD_SIZE + 1];
+    char data_buffer[MAX_DATA_PAYLOAD_SIZE];
+    int data_len = 0;
 
-    if (IS_FAILURE (make_send_data (db_user, table_name, data, MAX_DATA_PAYLOAD_SIZE + 1)))
+    if (IS_FAILURE (make_send_data (user_name, table_name, data_buffer, MAX_DATA_PAYLOAD_SIZE, &data_len)))
     {
         goto error;
     }
 
-    if (IS_FAILURE (send_ctcp (CTCP_REGISTER_TABLE, 0, control_session, job_session, strlen (data), data)))
+    if (IS_FAILURE (send_ctcp (CTCP_REGISTER_TABLE, 0, control_session, job_session, data_len, data_buffer)))
     {
         goto error;
     }
@@ -534,16 +554,17 @@ error:
     return CTC_FAILURE;
 }
 
-int unregister_table_from_job (CONTROL_SESSION *control_session, JOB_SESSION *job_session, char *db_user, char *table_name)
+int unregister_table_from_job (CONTROL_SESSION *control_session, JOB_SESSION *job_session, char *user_name, char *table_name)
 {
-    char data[MAX_DATA_PAYLOAD_SIZE + 1];
+    char data_buffer[MAX_DATA_PAYLOAD_SIZE];
+    int data_len = 0;
 
-    if (IS_FAILURE (make_send_data (db_user, table_name, data, MAX_DATA_PAYLOAD_SIZE + 1)))
+    if (IS_FAILURE (make_send_data (user_name, table_name, data_buffer, MAX_DATA_PAYLOAD_SIZE, &data_len)))
     {
         goto error;
     }
 
-    if (IS_FAILURE (send_ctcp (CTCP_UNREGISTER_TABLE, 0, control_session, job_session, strlen (data), data)))
+    if (IS_FAILURE (send_ctcp (CTCP_UNREGISTER_TABLE, 0, control_session, job_session, data_len, data_buffer)))
     {
         goto error;
     }

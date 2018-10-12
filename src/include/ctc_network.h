@@ -127,8 +127,8 @@ int close_control_session (CONTROL_SESSION *control_session);
 int open_job_session (CONTROL_SESSION *control_session, JOB_SESSION *job_session);
 int close_job_session (CONTROL_SESSION *control_session, JOB_SESSION *job_session);
 int get_server_status (CONTROL_SESSION *control_session, int *server_status);
-int register_table_to_job (CONTROL_SESSION *control_session, JOB_SESSION *job_session, char *db_user, char *table_name);
-int unregister_table_from_job (CONTROL_SESSION *control_session, JOB_SESSION *job_session, char *db_user, char *table_name);
+int register_table_to_job (CONTROL_SESSION *control_session, JOB_SESSION *job_session, char *user_name, char *table_name);
+int unregister_table_from_job (CONTROL_SESSION *control_session, JOB_SESSION *job_session, char *user_name, char *table_name);
 int get_job_status (CONTROL_SESSION *control_session, JOB_SESSION *job_session, int *job_status);
 
 #endif
