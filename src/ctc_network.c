@@ -7,7 +7,7 @@
 
 int make_ctcp_header (CTCP_OP_ID op_id, char op_param, CONTROL_SESSION *control_session, JOB_SESSION *job_session, int header_data, CTCP_HEADER *ctcp_header)
 {
-    memset (ctcp_header, 0, sizeof (CTCP_HEADER));
+    memset (ctcp_header, 0, CTCP_HEADER_SIZE);
 
     /* Operation ID */
     ctcp_header->op_id = op_id;
@@ -41,7 +41,7 @@ int make_ctcp_header (CTCP_OP_ID op_id, char op_param, CONTROL_SESSION *control_
 
 int make_ctcp_data_payload (char *ctcp_data_payload, char *data, int data_size)
 {
-    if (data_size > MAX_DATA_PAYLOAD_SIZE)
+    if (data_size > CTCP_MAX_DATA_PAYLOAD_SIZE)
     {
         goto error;
     }
@@ -78,7 +78,7 @@ int send_ctcp (CTCP_OP_ID op_id, char op_param, CONTROL_SESSION *control_session
         data_payload_size = header_data;
     }
 
-    data_size = sizeof (CTCP_HEADER) + data_payload_size;
+    data_size = CTCP_HEADER_SIZE + data_payload_size;
 
     if (op_id != CTCP_CREATE_JOB_SESSION)
     {
@@ -199,14 +199,14 @@ int recv_ctcp_header (CTCP_OP_ID op_id, CONTROL_SESSION *control_session, JOB_SE
 
     if (op_id != CTCP_CREATE_JOB_SESSION_RESULT)
     {
-        retval = read (control_session->sockfd, ctcp_header, sizeof (CTCP_HEADER));
+        retval = read (control_session->sockfd, ctcp_header, CTCP_HEADER_SIZE);
     }
     else
     {
-        retval = read (job_session->sockfd, ctcp_header, sizeof (CTCP_HEADER));
+        retval = read (job_session->sockfd, ctcp_header, CTCP_HEADER_SIZE);
     }
 
-    if (retval == -1 || retval < sizeof (CTCP_HEADER))
+    if (retval == -1 || retval < CTCP_HEADER_SIZE)
     {
         goto error;
     }
@@ -296,6 +296,7 @@ int recv_ctcp (CTCP_OP_ID op_id, CONTROL_SESSION *control_session, JOB_SESSION *
 
             break;
         case CTCP_START_CAPTURE_RESULT:
+            /* nothing to do */
 
             break;
         case CTCP_STOP_CAPTURE_RESULT:
@@ -529,10 +530,10 @@ error:
 
 int register_table_to_job (CONTROL_SESSION *control_session, JOB_SESSION *job_session, char *user_name, char *table_name)
 {
-    char data_buffer[MAX_DATA_PAYLOAD_SIZE];
+    char data_buffer[CTCP_MAX_DATA_PAYLOAD_SIZE];
     int data_len = 0;
 
-    if (IS_FAILURE (make_send_data (user_name, table_name, data_buffer, MAX_DATA_PAYLOAD_SIZE, &data_len)))
+    if (IS_FAILURE (make_send_data (user_name, table_name, data_buffer, CTCP_MAX_DATA_PAYLOAD_SIZE, &data_len)))
     {
         goto error;
     }
@@ -556,10 +557,10 @@ error:
 
 int unregister_table_from_job (CONTROL_SESSION *control_session, JOB_SESSION *job_session, char *user_name, char *table_name)
 {
-    char data_buffer[MAX_DATA_PAYLOAD_SIZE];
+    char data_buffer[CTCP_MAX_DATA_PAYLOAD_SIZE];
     int data_len = 0;
 
-    if (IS_FAILURE (make_send_data (user_name, table_name, data_buffer, MAX_DATA_PAYLOAD_SIZE, &data_len)))
+    if (IS_FAILURE (make_send_data (user_name, table_name, data_buffer, CTCP_MAX_DATA_PAYLOAD_SIZE, &data_len)))
     {
         goto error;
     }
@@ -570,6 +571,25 @@ int unregister_table_from_job (CONTROL_SESSION *control_session, JOB_SESSION *jo
     }
 
     if (IS_FAILURE (recv_ctcp (CTCP_UNREGISTER_TABLE_RESULT, control_session, job_session, NULL)))
+    {
+        goto error;
+    }
+
+    return CTC_SUCCESS;
+
+error:
+
+    return CTC_FAILURE;
+}
+
+int start_capture_for_job (CONTROL_SESSION *control_session, JOB_SESSION *job_session)
+{
+    if (IS_FAILURE (send_ctcp (CTCP_START_CAPTURE, 0, control_session, job_session, 0, NULL)))
+    {
+        goto error;
+    }
+
+    if (IS_FAILURE (recv_ctcp (CTCP_START_CAPTURE_RESULT, control_session, job_session, NULL)))
     {
         goto error;
     }

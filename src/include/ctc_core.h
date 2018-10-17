@@ -8,12 +8,30 @@
 #define MAX_CTC_HANDLE_COUNT 100 /* CTC_SESSION_GROUP_MAX */
 #define MAX_JOB_HANDLE_COUNT 10
 
+#define MAX_DATA_BUFFER_COUNT 500
+#define MAX_PACKET_COUNT_IN_DATA_BUFFER 100
+
+typedef struct captured_data CAPTURED_DATA;
+struct captured_data
+{
+    CTCP *packet_buffer;
+    int packet_write_idx;
+    int packet_read_idx;
+};
+
 typedef struct job_handle JOB_HANDLE;
 struct job_handle
 {
     int ID;
 
     JOB_SESSION job_session;
+
+    CAPTURED_DATA captured_data_array[MAX_DATA_BUFFER_COUNT];
+    int data_write_idx;
+    int data_read_idx;
+
+    pthread_t job_thread;
+    bool job_thread_is_alive;
 };
 
 typedef struct ctc_handle CTC_HANDLE;

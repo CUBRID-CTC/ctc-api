@@ -130,14 +130,30 @@ error:
 
 int ctc_start_capture (int ctc_handle, int job_descriptor)
 {
+    if (IS_FAILURE (start_capture (ctc_handle, job_descriptor)))
+    {
+        goto error;
+    }
 
     return CTC_SUCCESS;
+
+error:
+
+    return CTC_FAILURE;
 }
 
 int ctc_stop_capture (int ctc_handle, int job_descriptor, int close_condition)
 {
+    if (IS_FAILURE (stop_capture (ctc_handle, job_descriptor, close_condition)))
+    {
+        goto error;
+    }
 
     return CTC_SUCCESS;
+
+error:
+
+    return CTC_FAILURE;
 }
 
 int ctc_fetch_capture_transaction (int ctc_handle, int job_descriptor, char *result_buffer, int result_buffer_size, int* required_buffer_size)

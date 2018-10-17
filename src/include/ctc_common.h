@@ -10,4 +10,10 @@
 #define IS_NULL(a) (a == NULL)
 #define IS_NOT_NULL(a) (a != NULL)
 
+typedef enum
+{
+    false,
+    true
+} bool;
+
 #endif

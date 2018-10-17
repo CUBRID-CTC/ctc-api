@@ -9,7 +9,10 @@
 #define CTCP_PATCH_VERSION 0
 #define CTCP_BUILD_VERSION 0
 
-#define MAX_DATA_PAYLOAD_SIZE 4080
+#define CTCP_HEADER_SIZE 16
+#define CTCP_MAX_DATA_PAYLOAD_SIZE 4080
+
+#define CTCP_PACKET_SIZE (CTCP_HEADER_SIZE + CTCP_MAX_DATA_PAYLOAD_SIZE)
 
 typedef enum ctcp_operation_id CTCP_OP_ID;
 enum ctcp_operation_id
@@ -34,8 +37,9 @@ enum ctcp_operation_id
     CTCP_SET_JOB_ATTRIBUTE_RESULT       = 0x12,
     CTCP_START_CAPTURE                  = 0x81,
     CTCP_START_CAPTURE_RESULT           = 0x82,
-    CTCP_STOP_CAPTURE                   = 0x83,
-    CTCP_STOP_CAPTURE_RESULT            = 0x84
+    CTCP_CAPTURED_DATA_RESULT           = 0x83,
+    CTCP_STOP_CAPTURE                   = 0x84,
+    CTCP_STOP_CAPTURE_RESULT            = 0x85
 };
 
 enum ctcp_result_code
@@ -98,7 +102,7 @@ typedef struct ctcp CTCP;
 struct ctcp
 {
     CTCP_HEADER header;
-    char data_payload[MAX_DATA_PAYLOAD_SIZE];
+    char data_payload[CTCP_MAX_DATA_PAYLOAD_SIZE];
 };
 
 typedef struct job_session JOB_SESSION;
