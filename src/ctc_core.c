@@ -424,7 +424,7 @@ int get_next_captured_data_write_pos (JOB_HANDLE *job_handle, CAPTURED_DATA **ca
 {
     job_handle->data_write_idx ++;
 
-    if (job_handle->data_write_idx == MAX_DATA_BUFFER_COUNT)
+    if (job_handle->data_write_idx == MAX_CAPTURED_DATA_BUFFER_COUNT)
     {
         job_handle->data_write_idx = 0;
     }
@@ -435,7 +435,7 @@ int get_next_captured_data_write_pos (JOB_HANDLE *job_handle, CAPTURED_DATA **ca
         goto error;
     }
 
-    *captured_data_p = &job_handle->captured_data_array[job_handle->data_write_idx];
+    *captured_data_p = &job_handle->captured_data[job_handle->data_write_idx];
 
     return CTC_SUCCESS;
 
@@ -446,7 +446,7 @@ error:
 
 int get_current_captured_data_write_pos (JOB_HANDLE *job_handle, CAPTURED_DATA **captured_data_p)
 {
-    *captured_data_p = &job_handle->captured_data_array[job_handle->data_write_idx];
+    *captured_data_p = &job_handle->captured_data[job_handle->data_write_idx];
 
     return CTC_SUCCESS;
 
@@ -455,24 +455,23 @@ error:
     return CTC_FAILURE;
 }
 
-int alloc_ctc_packet_buffer (CAPTURED_DATA *captured_data)
+int alloc_data_buffer (CAPTURED_DATA *captured_data)
 {
-    CTCP *packet_buffer = NULL;
+    char *data_buffer = NULL;
 
-    packet_buffer = captured_data->packet_buffer;
-    if (IS_NULL (packet_buffer))
+    data_buffer = (char *)malloc (MAX_CAPTURED_DATA_BUFFER_SIZE);
+    if (IS_NULL (data_buffer))
     {
-        packet_buffer = (CTCP *)malloc (CTCP_PACKET_SIZE * MAX_PACKET_COUNT_IN_DATA_BUFFER);
-        if (IS_NULL (packet_buffer))
-        {
-            goto error;
-        }
-
-        captured_data->packet_buffer = packet_buffer;
+        goto error;
     }
 
-    captured_data->packet_write_idx = -1;
-    captured_data->packet_read_idx = -1;
+    captured_data->data_buffer = data_buffer;
+    captured_data->remaining_buffer_size = MAX_CAPTURED_DATA_BUFFER_SIZE;
+
+    captured_data->data_count = 0;
+
+    captured_data->write_offset = 0;
+    captured_data->read_offset = 0; 
 
     return CTC_SUCCESS;
 
@@ -481,7 +480,7 @@ error:
     return CTC_FAILURE;
 }
 
-int free_ctc_packet_buffer (CAPTURED_DATA *captured_data)
+int free_data_buffer (CAPTURED_DATA *captured_data)
 {
 
     return CTC_SUCCESS;
@@ -491,36 +490,35 @@ error:
     return CTC_FAILURE;
 }
 
-int get_next_ctc_packet_write_pos (JOB_HANDLE *job_handle, CTCP **packet_buffer_p)
+int get_data_buffer_for_captured_data (JOB_HANDLE *job_handle, int data_size, char **data_buffer_p)
 {
     CAPTURED_DATA *captured_data;
-    CTCP *packet_buffer;
+    char *data_buffer;
 
     if (IS_FAILURE (get_current_captured_data_write_pos (job_handle, &captured_data)))
     {
         goto error;
     }
 
-    captured_data->packet_write_idx ++;
-
-    if (captured_data->packet_write_idx == MAX_PACKET_COUNT_IN_DATA_BUFFER)
+    while (captured_data->remaining_buffer_size < data_size)
     {
-        captured_data = NULL;
-
-        if (IS_FAILURE (get_next_captured_data_write_pos (job_handle, &captured_data)))
+        if (IS_NULL (captured_data->data_buffer))
         {
-            goto error;
+            if (IS_FAILURE (alloc_data_buffer (captured_data)))
+            {
+                goto error;
+            }
         }
-
-        if (IS_FAILURE (alloc_ctc_packet_buffer (captured_data)))
+        else
         {
-            goto error;
+            if (IS_FAILURE (get_next_captured_data_write_pos (job_handle, &captured_data)))
+            {
+                goto error;
+            }
         }
-
-        captured_data->packet_write_idx ++;
     }
 
-    *packet_buffer_p = &captured_data->packet_buffer[captured_data->packet_write_idx];
+    *data_buffer_p = captured_data->data_buffer + captured_data->write_offset;
 
     return CTC_SUCCESS;
 
@@ -529,15 +527,17 @@ error:
     return CTC_FAILURE;
 }
 
-int prepare_capture (JOB_HANDLE *job_handle)
+int prepare_captured_data_read (JOB_HANDLE *job_handle)
 {
     int i;
 
-    for (i = 0; i < MAX_DATA_BUFFER_COUNT; i ++)
+    for (i = 0; i < MAX_CAPTURED_DATA_BUFFER_COUNT; i ++)
     {
-        job_handle->captured_data_array[i].packet_buffer = NULL;
-        job_handle->captured_data_array[i].packet_write_idx = -1; 
-        job_handle->captured_data_array[i].packet_read_idx = -1;
+        job_handle->captured_data[i].data_buffer = NULL;
+        job_handle->captured_data[i].remaining_buffer_size = 0;
+        job_handle->captured_data[i].data_count = 0;
+        job_handle->captured_data[i].write_offset = 0;
+        job_handle->captured_data[i].read_offset = 0;
     }
 
     job_handle->data_write_idx = 0;
@@ -550,25 +550,41 @@ error:
     return CTC_FAILURE;
 }
 
-int execute_capture (JOB_HANDLE *job_handle)
+int execute_captured_data_read (CTC_HANDLE *ctc_handle, JOB_HANDLE *job_handle)
 {
-    CTCP *packet_buffer;
+    char *data_buffer;
+    int data_size;
+
+    bool is_fragmented;
 
     while (job_handle->job_thread_is_alive == true)
     {
-        if (IS_FAILURE (get_next_ctc_packet_write_pos (job_handle, &packet_buffer)))
+        // 블럭되면 안된다. --> 여기서 다 읽고 ....
+        if (IS_FAILURE (read_captured_data_info (&ctc_handle->control_session, &job_handle->job_session, &data_size, &is_fragmented)))
         {
             goto error;
         }
 
-        // read
+        // 여기서 프로세싱 해버릴까? 그럼 메모리 복사가 2번 일어난다. 그렇지만 network 파트가 깔끔해진다.
+        if (data_size != 0)
+        {
+            if (IS_FAILURE (get_data_buffer_for_captured_data (job_handle, data_size, &data_buffer)))
+            {
+                goto error;
+            }
+
+            if (IS_FAILURE (read_captured_data (&job_handle->job_session, data_buffer, data_size, is_fragmented)))
+            {
+                goto error;
+            }
+
+            // data_count랑, write_offset 변경해야 함
+        }
     }
 
     return CTC_SUCCESS;
 
 error:
-
-    job_handle->job_thread_is_alive = false;
 
     return CTC_FAILURE;
 }
@@ -577,16 +593,19 @@ error:
 // 자원 해제와 read는 main thread에서 수행
 void *job_thread_main (void *arg)
 {
-    JOB_HANDLE *job_handle = (JOB_HANDLE *)arg;
+    JOB_THREAD_ARGS *job_thread_args = (JOB_THREAD_ARGS *)arg;
+
+    CTC_HANDLE *ctc_handle = job_thread_args->ctc_handle;
+    JOB_HANDLE *job_handle = job_thread_args->job_handle;
 
     job_handle->job_thread_is_alive = true;
 
-    if (IS_FAILURE (prepare_capture (job_handle)))
+    if (IS_FAILURE (prepare_captured_data_read (job_handle)))
     {
         goto error;
     }
 
-    if (IS_FAILURE (execute_capture (job_handle)))
+    if (IS_FAILURE (execute_captured_data_read (ctc_handle, job_handle)))
     {
         goto error;
     }
@@ -602,9 +621,11 @@ error:
     return CTC_FAILURE;
 }
 
-int create_job_thread (JOB_HANDLE *job_handle)
+int create_job_thread (CTC_HANDLE *ctc_handle, JOB_HANDLE *job_handle)
 {
-    if (IS_FAILURE (pthread_create (&job_handle->job_thread, NULL, job_thread_main, (void *)job_handle)))
+    JOB_THREAD_ARGS job_thread_args = {ctc_handle, job_handle};
+
+    if (IS_FAILURE (pthread_create (&job_handle->job_thread, NULL, job_thread_main, (void *)&job_thread_args)))
     {
         goto error;
     }
@@ -631,12 +652,12 @@ int start_capture (int ctc_handle_id, int job_handle_id)
         goto error;
     }
 
-    if (IS_FAILURE (create_job_thread (job_handle)))
+    if (IS_FAILURE (start_capture_for_job (&ctc_handle->control_session, &job_handle->job_session)))
     {
         goto error;
     }
 
-    if (IS_FAILURE (start_capture_for_job (&ctc_handle->control_session, &job_handle->job_session)))
+    if (IS_FAILURE (create_job_thread (ctc_handle, job_handle)))
     {
         goto error;
     }

@@ -197,13 +197,14 @@ int recv_ctcp_header (CTCP_OP_ID op_id, CONTROL_SESSION *control_session, JOB_SE
 {
     int retval;
 
-    if (op_id != CTCP_CREATE_JOB_SESSION_RESULT)
+    if (op_id == CTCP_CREATE_JOB_SESSION_RESULT ||
+        op_id == CTCP_CAPTURED_DATA_RESULT)
     {
-        retval = read (control_session->sockfd, ctcp_header, CTCP_HEADER_SIZE);
+        retval = read (job_session->sockfd, ctcp_header, CTCP_HEADER_SIZE);
     }
     else
     {
-        retval = read (job_session->sockfd, ctcp_header, CTCP_HEADER_SIZE);
+        retval = read (control_session->sockfd, ctcp_header, CTCP_HEADER_SIZE);
     }
 
     if (retval == -1 || retval < CTCP_HEADER_SIZE)
@@ -297,11 +298,19 @@ int recv_ctcp (CTCP_OP_ID op_id, CONTROL_SESSION *control_session, JOB_SESSION *
             break;
         case CTCP_START_CAPTURE_RESULT:
             /* nothing to do */
-
             break;
+
         case CTCP_STOP_CAPTURE_RESULT:
+            /* nothing to do */
 
             break;
+        case CTCP_CAPTURED_DATA_RESULT:
+            if (IS_NOT_NULL (header_data))
+            {
+                *header_data = ctcp_header.header_data;
+                job_session->is_fragmented = ctcp_header.op_param_or_result_code == CTC_RC_SUCCESS_FRAGMENTED ? true : false;
+            }
+
         default:
             goto error;
     }
@@ -592,6 +601,28 @@ int start_capture_for_job (CONTROL_SESSION *control_session, JOB_SESSION *job_se
     if (IS_FAILURE (recv_ctcp (CTCP_START_CAPTURE_RESULT, control_session, job_session, NULL)))
     {
         goto error;
+    }
+
+    return CTC_SUCCESS;
+
+error:
+
+    return CTC_FAILURE;
+}
+
+int read_captured_data_info (CONTROL_SESSION *control_session, JOB_SESSION *job_session, int *data_size, bool *is_fragmented)
+{
+    *data_size = 0;
+    *is_fragmented = false;
+
+    if (IS_FAILURE (recv_ctcp (CTCP_CAPTURED_DATA_RESULT, control_session, job_session, data_size)))
+    {
+        goto error;
+    }
+
+    if (*data_size != 0)
+    {
+        *is_fragmented = job_session->is_fragmented;
     }
 
     return CTC_SUCCESS;

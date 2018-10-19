@@ -12,8 +12,6 @@
 #define CTCP_HEADER_SIZE 16
 #define CTCP_MAX_DATA_PAYLOAD_SIZE 4080
 
-#define CTCP_PACKET_SIZE (CTCP_HEADER_SIZE + CTCP_MAX_DATA_PAYLOAD_SIZE)
-
 typedef enum ctcp_operation_id CTCP_OP_ID;
 enum ctcp_operation_id
 {
@@ -111,6 +109,8 @@ struct job_session
     int job_desc;
 
     int sockfd;
+
+    bool is_fragmented;
 };
 
 typedef struct control_session CONTROL_SESSION;
