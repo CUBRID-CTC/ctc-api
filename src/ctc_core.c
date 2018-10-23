@@ -422,20 +422,20 @@ error:
 
 int get_next_captured_data_write_pos (JOB_HANDLE *job_handle, CAPTURED_DATA **captured_data_p)
 {
-    job_handle->data_write_idx ++;
+    job_handle->write_idx ++;
 
-    if (job_handle->data_write_idx == MAX_CAPTURED_DATA_BUFFER_COUNT)
+    if (job_handle->write_idx == MAX_CAPTURED_DATA_BUFFER_COUNT)
     {
-        job_handle->data_write_idx = 0;
+        job_handle->write_idx = 0;
     }
 
-    if (job_handle->data_write_idx == job_handle->data_read_idx)
+    if (job_handle->write_idx == job_handle->read_idx)
     {
         // overflow
         goto error;
     }
 
-    *captured_data_p = &job_handle->captured_data[job_handle->data_write_idx];
+    *captured_data_p = &job_handle->captured_data[job_handle->write_idx];
 
     return CTC_SUCCESS;
 
@@ -446,7 +446,7 @@ error:
 
 int get_current_captured_data_write_pos (JOB_HANDLE *job_handle, CAPTURED_DATA **captured_data_p)
 {
-    *captured_data_p = &job_handle->captured_data[job_handle->data_write_idx];
+    *captured_data_p = &job_handle->captured_data[job_handle->write_idx];
 
     return CTC_SUCCESS;
 
@@ -490,7 +490,7 @@ error:
     return CTC_FAILURE;
 }
 
-int get_data_buffer_for_captured_data (JOB_HANDLE *job_handle, int data_size, char **data_buffer_p)
+int get_data_buffer_for_captured_data (JOB_HANDLE *job_handle, int required_buffer_size, char **data_buffer_p)
 {
     CAPTURED_DATA *captured_data;
     char *data_buffer;
@@ -500,7 +500,7 @@ int get_data_buffer_for_captured_data (JOB_HANDLE *job_handle, int data_size, ch
         goto error;
     }
 
-    while (captured_data->remaining_buffer_size < data_size)
+    while (captured_data->remaining_buffer_size < required_buffer_size)
     {
         if (IS_NULL (captured_data->data_buffer))
         {
@@ -511,6 +511,8 @@ int get_data_buffer_for_captured_data (JOB_HANDLE *job_handle, int data_size, ch
         }
         else
         {
+            // required_buffer_size > MAX_CAPTURED_DATA_BUFFER_SIZE
+            // 있어서는 안돼는 일...
             if (IS_FAILURE (get_next_captured_data_write_pos (job_handle, &captured_data)))
             {
                 goto error;
@@ -519,6 +521,8 @@ int get_data_buffer_for_captured_data (JOB_HANDLE *job_handle, int data_size, ch
     }
 
     *data_buffer_p = captured_data->data_buffer + captured_data->write_offset;
+    captured_data->write_offset += required_buffer_size;
+    captured_data->data_count ++; // lock 잡아야 한다. 그리고 여기서 쓰면 이상하고, 실제 데이터를 다 쓰고나서 ++ 해야함
 
     return CTC_SUCCESS;
 
@@ -540,8 +544,8 @@ int prepare_captured_data_read (JOB_HANDLE *job_handle)
         job_handle->captured_data[i].read_offset = 0;
     }
 
-    job_handle->data_write_idx = 0;
-    job_handle->data_read_idx = 0;
+    job_handle->write_idx = 0;
+    job_handle->read_idx = 0;
 
     return CTC_SUCCESS;
 
@@ -568,17 +572,26 @@ int execute_captured_data_read (CTC_HANDLE *ctc_handle, JOB_HANDLE *job_handle)
         // 여기서 프로세싱 해버릴까? 그럼 메모리 복사가 2번 일어난다. 그렇지만 network 파트가 깔끔해진다.
         if (data_size != 0)
         {
-            if (IS_FAILURE (get_data_buffer_for_captured_data (job_handle, data_size, &data_buffer)))
+
+            // data_count랑, write_offset 변경해야 함
+            if (IS_FAILURE (get_data_buffer_for_captured_data (job_handle, sizeof (bool) + sizeof (int) + data_size, &data_buffer)))
             {
                 goto error;
             }
+
+            // 아래 두개 하나로 묶자
+            // fragmented
+            memcpy (data_buffer, &is_fragmented, sizeof (bool));
+            data_buffer += sizeof (bool);
+
+            // data_size
+            memcpy (data_buffer, &data_size, sizeof (int));
+            data_buffer += sizeof (int);
 
             if (IS_FAILURE (read_captured_data (&job_handle->job_session, data_buffer, data_size, is_fragmented)))
             {
                 goto error;
             }
-
-            // data_count랑, write_offset 변경해야 함
         }
     }
 
@@ -637,6 +650,22 @@ error:
     return CTC_FAILURE;
 }
 
+int destroy_job_thread (CTC_HANDLE *ctc_handle, JOB_HANDLE *job_handle)
+{
+    JOB_THREAD_ARGS job_thread_args = {ctc_handle, job_handle};
+
+    // 여기서 성능 체크 ...
+    // detach thread로 처리할지 join 해줄지
+
+    job->handle->job_thread_is_alive = false;
+
+    return CTC_SUCCESS;
+
+error:
+
+    return CTC_FAILURE;
+}
+
 int start_capture (int ctc_handle_id, int job_handle_id)
 {
     CTC_HANDLE *ctc_handle;
@@ -683,6 +712,40 @@ int stop_capture (int ctc_handle_id, int job_handle_id)
     {
         goto error;
     }
+
+    if (IS_FAILURE (stop_capture_for_job (&ctc_handle->control_session, &job_handle->job_session)))
+    {
+        goto error;
+    }
+
+    if (IS_FAILURE (destroy_job_thread (ctc_handle, job_handle)))
+    {
+        goto error;
+    }
+
+    return CTC_SUCCESS;
+
+error:
+
+    return CTC_FAILURE;
+}
+
+int fetch_capture_transaction (int ctc_handle_id, int job_handle_id, char *result_buffer, int result_buffer_size, int* required_buffer_size)
+{
+    CTC_HANDLE *ctc_handle;
+    JOB_HANDLE *job_handle;
+
+    if (IS_FAILURE (find_ctc_handle (ctc_handle_id, &ctc_handle)))
+    {
+        goto error;
+    }
+
+    if (IS_FAILURE (find_job_handle (ctc_handle, job_handle_id, &job_handle)))
+    {
+        goto error;
+    }
+
+    // 
 
     return CTC_SUCCESS;
 

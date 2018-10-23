@@ -309,10 +309,33 @@ int recv_ctcp (CTCP_OP_ID op_id, CONTROL_SESSION *control_session, JOB_SESSION *
             {
                 *header_data = ctcp_header.header_data;
                 job_session->is_fragmented = ctcp_header.op_param_or_result_code == CTC_RC_SUCCESS_FRAGMENTED ? true : false;
+
+                // 데이터 read도 여기서 처리하면 좋지만
+                // 1) header 읽기까지 데이터크기를 모르기에 버퍼를 잡을 수 없다.
+                // 2) packet max 크기로 잡으면 되지만 메모리 복사가 2회 발생한다. (socket에서 읽을때, api 자료구조에 넣을 때)
             }
 
+            break;
         default:
             goto error;
+    }
+
+    return CTC_SUCCESS;
+
+error:
+
+    return CTC_FAILURE;
+}
+
+int recv_ctcp_data_payload (JOB_SESSION *job_session, char *data_buffer, int data_size)
+{
+    int retval;
+
+    retval = read (job_session->sockfd, data_buffer, data_size);
+
+    if (retval == -1 || retval < data_size)
+    {
+        goto error;
     }
 
     return CTC_SUCCESS;
@@ -610,6 +633,26 @@ error:
     return CTC_FAILURE;
 }
 
+int stop_capture_for_job (CONTROL_SESSION *control_session, JOB_SESSION *job_session)
+{
+    // op param 으로 close 컨디션 처리
+    if (IS_FAILURE (send_ctcp (CTCP_STOP_CAPTURE, 0, control_session, job_session, 0, NULL)))
+    {
+        goto error;
+    }
+
+    if (IS_FAILURE (recv_ctcp (CTCP_STOP_CAPTURE_RESULT, control_session, job_session, NULL)))
+    {
+        goto error;
+    }
+
+    return CTC_SUCCESS;
+
+error:
+
+    return CTC_FAILURE;
+}
+
 int read_captured_data_info (CONTROL_SESSION *control_session, JOB_SESSION *job_session, int *data_size, bool *is_fragmented)
 {
     *data_size = 0;
@@ -624,6 +667,17 @@ int read_captured_data_info (CONTROL_SESSION *control_session, JOB_SESSION *job_
     {
         *is_fragmented = job_session->is_fragmented;
     }
+
+    return CTC_SUCCESS;
+
+error:
+
+    return CTC_FAILURE;
+}
+
+int read_captured_data (JOB_SESSION *job_session, char *data_buffer, int data_size, bool is_fragmented)
+{
+    if (IS_FAILURE (recv_ctcp_data_payload ()))
 
     return CTC_SUCCESS;
 

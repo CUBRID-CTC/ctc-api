@@ -144,6 +144,12 @@ error:
 
 int ctc_stop_capture (int ctc_handle, int job_descriptor, int close_condition)
 {
+    if (close_condition != CTC_QUIT_JOB_IMMEDIATELY &&
+        close_condition != CTC_QUIT_JOB_AFTER_TRANSACTION)
+    {
+        goto error;
+    }
+
     if (IS_FAILURE (stop_capture (ctc_handle, job_descriptor, close_condition)))
     {
         goto error;
@@ -156,8 +162,19 @@ error:
     return CTC_FAILURE;
 }
 
+// 메모리에 몇 개의 결과가 있는지 알아야
 int ctc_fetch_capture_transaction (int ctc_handle, int job_descriptor, char *result_buffer, int result_buffer_size, int* required_buffer_size)
 {
+    if (IS_NULL (result_buffer) || IS_NULL (required_buffer_size) ||
+        result_buffer_size <= 0)
+    {
+        goto error;
+    }
+
+    if (IS_FAILURE (fetch_capture_transaction (ctc_handle, job_descriptor, result_buffer, result_buffer_size, required_buffer_size)))
+    {
+        goto error;
+    }
 
     return CTC_SUCCESS;
 }

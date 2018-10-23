@@ -38,8 +38,8 @@ struct job_handle
     JOB_SESSION job_session;
 
     CAPTURED_DATA captured_data[MAX_CAPTURED_DATA_BUFFER_COUNT];
-    int data_write_idx;
-    int data_read_idx;
+    int write_idx;
+    int read_idx;
 
     pthread_t job_thread;
     bool job_thread_is_alive;
