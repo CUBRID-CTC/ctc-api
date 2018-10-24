@@ -7,7 +7,7 @@
 
 int make_ctcp_header (CTCP_OP_ID op_id, char op_param, CONTROL_SESSION *control_session, JOB_SESSION *job_session, int header_data, CTCP_HEADER *ctcp_header)
 {
-    memset (ctcp_header, 0, CTCP_HEADER_SIZE);
+    memset (ctcp_header, 0, CTCP_PACKET_HEADER_SIZE);
 
     /* Operation ID */
     ctcp_header->op_id = op_id;
@@ -78,7 +78,7 @@ int send_ctcp (CTCP_OP_ID op_id, char op_param, CONTROL_SESSION *control_session
         data_payload_size = header_data;
     }
 
-    data_size = CTCP_HEADER_SIZE + data_payload_size;
+    data_size = CTCP_PACKET_HEADER_SIZE + data_payload_size;
 
     if (op_id != CTCP_CREATE_JOB_SESSION)
     {
@@ -200,14 +200,14 @@ int recv_ctcp_header (CTCP_OP_ID op_id, CONTROL_SESSION *control_session, JOB_SE
     if (op_id == CTCP_CREATE_JOB_SESSION_RESULT ||
         op_id == CTCP_CAPTURED_DATA_RESULT)
     {
-        retval = read (job_session->sockfd, ctcp_header, CTCP_HEADER_SIZE);
+        retval = read (job_session->sockfd, ctcp_header, CTCP_PACKET_HEADER_SIZE);
     }
     else
     {
-        retval = read (control_session->sockfd, ctcp_header, CTCP_HEADER_SIZE);
+        retval = read (control_session->sockfd, ctcp_header, CTCP_PACKET_HEADER_SIZE);
     }
 
-    if (retval == -1 || retval < CTCP_HEADER_SIZE)
+    if (retval == -1 || retval < CTCP_PACKET_HEADER_SIZE)
     {
         goto error;
     }
@@ -308,11 +308,7 @@ int recv_ctcp (CTCP_OP_ID op_id, CONTROL_SESSION *control_session, JOB_SESSION *
             if (IS_NOT_NULL (header_data))
             {
                 *header_data = ctcp_header.header_data;
-                job_session->is_fragmented = ctcp_header.op_param_or_result_code == CTC_RC_SUCCESS_FRAGMENTED ? true : false;
-
-                // 데이터 read도 여기서 처리하면 좋지만
-                // 1) header 읽기까지 데이터크기를 모르기에 버퍼를 잡을 수 없다.
-                // 2) packet max 크기로 잡으면 되지만 메모리 복사가 2회 발생한다. (socket에서 읽을때, api 자료구조에 넣을 때)
+                job_session->result_code = ctcp_header.op_param_or_result_code;
             }
 
             break;
@@ -614,8 +610,250 @@ error:
     return CTC_FAILURE;
 }
 
+void init_captured_data_buffer (CAPTURED_DATA_BUFFER *captured_data_buffer)
+{
+    memset (captured_data_buffer->buffer, 0, CAPTURED_DATA_BUFFER_SIZE);
+    captured_data_buffer->remaining_buffer_size = CAPTURED_DATA_BUFFER_SIZE;
+
+    captured_data_buffer->write_offset = 0;
+    captured_data_buffer->read_offset = 0;
+}
+
+int alloc_data_buffer (JOB_SESSION *job_session, int requested_buffer_size, char **data_buffer_p)
+{
+    CAPTURED_DATA_BUFFER *captured_data_buffer;
+    char *data_buffer;
+
+    if (requested_buffer_size <= 0 || requested_buffer_size > CAPTURED_DATA_BUFFER_SIZE ||
+        IS_NULL (data_buffer_p))
+    {
+        goto error;
+    }
+
+    captured_data_buffer = job_session->captured_data_buffer_array[job_session->write_idx];
+
+    while (1)
+    {
+        if (IS_NULL (captured_data_buffer))
+        {
+            captured_data_buffer = (CAPTURED_DATA_BUFFER *)malloc (sizeof (CAPTURED_DATA_BUFFER));
+            if (IS_NULL (captured_data_buffer))
+            {
+                goto error;
+            }
+
+            init_captured_data_buffer (captured_data_buffer);
+
+            job_session->captured_data_buffer_array[job_session->write_idx] = captured_data_buffer;
+
+            captured_data_buffer->remaining_buffer_size -= requested_buffer_size;
+
+            *data_buffer_p = captured_data_buffer->buffer;
+
+            break;
+        }
+        else
+        {
+            if (captured_data_buffer->remaining_buffer_size < requested_buffer_size)
+            {
+                job_session->write_idx ++;
+
+                if (job_session->write_idx == CAPTURED_DATA_BUFFER_ARRAY_SIZE)
+                {
+                    job_session->write_idx = 0;
+                }
+
+                if (job_session->write_idx == job_session->read_idx)
+                {
+                    // overflow
+                    goto error;
+                }
+
+                captured_data_buffer = job_session->captured_data_buffer_array[job_session->write_idx];
+
+                if (IS_NOT_NULL (captured_data_buffer))
+                {
+                    init_captured_data_buffer (captured_data_buffer);
+
+                    captured_data_buffer->remaining_buffer_size -= requested_buffer_size;
+
+                    *data_buffer_p = captured_data_buffer->buffer;
+
+                    break;
+                }
+            }
+            else
+            {
+                captured_data_buffer->remaining_buffer_size -= requested_buffer_size;
+
+                *data_buffer_p = captured_data_buffer->buffer + captured_data_buffer->write_offset;
+
+                break;
+            }
+        }
+    }
+
+    return CTC_SUCCESS;
+
+error:
+
+    return CTC_FAILURE;
+}
+
+int read_captured_data (JOB_SESSION *job_session, char *data_buffer, int buffer_size, int data_size)
+{
+    int retval;
+
+    CAPTURED_DATA_BUFFER *captured_data_buffer;
+
+    /* header - is fragmented */
+    memcpy (data_buffer, &job_session->result_code, sizeof (job_session->result_code));
+    data_buffer += sizeof (job_session->result_code);
+
+    if (IS_FAILURE (recv_ctcp_data_payload (job_session, data_buffer, data_size)))
+    {
+        goto error;
+    }
+
+    captured_data_buffer = job_session->captured_data_buffer_array[captured_data_buffer->write_idx];
+    if (IS_NULL (captured_data_buffer))
+    {
+        goto error;
+    }
+
+    captured_data_buffer->write_offset += buffer_size;
+
+    return CTC_SUCCESS;
+
+error:
+
+    return CTC_FAILURE;
+}
+
+int prepare_captured_data_read (JOB_SESSION *job_session)
+{
+    int i;
+
+    for (i = 0; i < CAPTURED_DATA_BUFFER_ARRAY_SIZE; i ++)
+    {
+        job_session->captured_data_buffer_array[i] = NULL;
+    }
+
+    job_session->write_idx = 0;
+    job_session->read_idx = 0;
+
+    return CTC_SUCCESS;
+
+error:
+
+    return CTC_FAILURE;
+}
+
+int execute_captured_data_read (CONTROL_SESSION *control_session, JOB_SESSION *job_session)
+{
+    char *data_buffer;
+    int data_buffer_size;
+
+    int data_payload_size;
+
+    while (job_session->job_thread_is_alive == true)
+    {
+        data_payload_size = 0;
+
+        if (IS_FAILURE (recv_ctcp (CTCP_CAPTURED_DATA_RESULT, control_session, job_session, &data_payload_size)))
+        {
+            goto error;
+        }
+
+        if (data_payload_size != 0)
+        {
+            data_buffer = NULL;
+            data_buffer_size = sizeof (job_session->result_code) + data_payload_size;
+
+            if (IS_FAILURE (alloc_data_buffer (job_session, data_buffer_size, &data_buffer)))
+            {
+                goto error;
+            }
+
+            if (IS_FAILURE (read_captured_data (job_session, data_buffer, data_buffer_size, data_payload_size)))
+            {
+                goto error;
+            }
+        }
+    }
+
+    return CTC_SUCCESS;
+
+error:
+
+    return CTC_FAILURE;
+}
+
+// 자원 할당과 write는 job thread가 수행
+// 자원 해제와 read는 main thread에서 수행
+void *job_thread_main (void *arg)
+{
+    JOB_THREAD_ARGS *job_thread_args = (JOB_THREAD_ARGS *)arg;
+
+    CTC_HANDLE *control_session = job_thread_args->control_session;
+    JOB_HANDLE *job_session = job_thread_args->job_session;
+
+    job_session->job_thread_is_alive = true;
+
+    if (IS_FAILURE (prepare_captured_data_read (job_session)))
+    {
+        goto error;
+    }
+
+    if (IS_FAILURE (execute_captured_data_read (control_session, job_session)))
+    {
+        goto error;
+    }
+
+    job_session->job_thread_is_alive = false;
+
+    return CTC_SUCCESS;
+
+error:
+
+    job_session->job_thread_is_alive = false;
+
+    return CTC_FAILURE;
+}
+
+int create_job_thread (CONTROL_SESSION *control_session, JOB_SESSION *job_session)
+{
+    job_session->job_thread_args.control_session = control_session;
+    job_session->job_thread_args.job_session = job_session;
+
+    if (IS_FAILURE (pthread_create (&job_session->job_thread, NULL, job_thread_main, (void *)&job_session->job_thread_args)))
+    {
+        goto error;
+    }
+
+    return CTC_SUCCESS;
+
+error:
+
+    return CTC_FAILURE;
+}
+
+int destroy_job_thread (JOB_SESSION *job_session)
+{
+    return CTC_SUCCESS;
+
+error:
+
+    return CTC_FAILURE;
+}
+
 int start_capture_for_job (CONTROL_SESSION *control_session, JOB_SESSION *job_session)
 {
+    if (IS_FAILURE (create_job_thread (control_session, job_session)))
+    {
+        goto error;
+    }
+
     if (IS_FAILURE (send_ctcp (CTCP_START_CAPTURE, 0, control_session, job_session, 0, NULL)))
     {
         goto error;
@@ -645,39 +883,6 @@ int stop_capture_for_job (CONTROL_SESSION *control_session, JOB_SESSION *job_ses
     {
         goto error;
     }
-
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILURE;
-}
-
-int read_captured_data_info (CONTROL_SESSION *control_session, JOB_SESSION *job_session, int *data_size, bool *is_fragmented)
-{
-    *data_size = 0;
-    *is_fragmented = false;
-
-    if (IS_FAILURE (recv_ctcp (CTCP_CAPTURED_DATA_RESULT, control_session, job_session, data_size)))
-    {
-        goto error;
-    }
-
-    if (*data_size != 0)
-    {
-        *is_fragmented = job_session->is_fragmented;
-    }
-
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILURE;
-}
-
-int read_captured_data (JOB_SESSION *job_session, char *data_buffer, int data_size, bool is_fragmented)
-{
-    if (IS_FAILURE (recv_ctcp_data_payload ()))
 
     return CTC_SUCCESS;
 

@@ -9,8 +9,12 @@
 #define CTCP_PATCH_VERSION 0
 #define CTCP_BUILD_VERSION 0
 
-#define CTCP_HEADER_SIZE 16
-#define CTCP_MAX_DATA_PAYLOAD_SIZE 4080
+#define CTCP_PACKET_SIZE 4096
+#define CTCP_PACKET_HEADER_SIZE 16
+#define CTCP_MAX_DATA_PAYLOAD_SIZE (CTCP_PACKET_SIZE - CTCP_PACKET_HEADER_SIZE)
+
+#define CAPTURED_DATA_BUFFER_ARRAY_SIZE 1000
+#define CAPTURED_DATA_BUFFER_SIZE (CTCP_PACKET_SIZE * 50)
 
 typedef enum ctcp_operation_id CTCP_OP_ID;
 enum ctcp_operation_id
@@ -68,6 +72,15 @@ enum ctc_conn_type
     CTC_CONN_TYPE_CTRL_ONLY = 1
 };
 
+typedef enum ctc_stmt_type CTC_STMT_TYPE;
+enum ctc_stmt_type
+{
+    CTC_STMT_TYPE_INSERT = 1,
+    CTC_STMT_TYPE_UPDATE = 2,
+    CTC_STMT_TYPE_DELETE = 3,
+    CTC_STMT_TYPE_COMMIT = 4
+};
+
 enum ctc_server_status
 {
     CTC_SERVER_NOT_READY = 0,
@@ -103,6 +116,23 @@ struct ctcp
     char data_payload[CTCP_MAX_DATA_PAYLOAD_SIZE];
 };
 
+typedef struct job_thread_args JOB_THREAD_ARGS;
+struct job_thread_args
+{
+    CONTROL_SESSION *control_session;
+    JOB_SESSION *job_session;
+};
+
+typedef struct captured_data_buffer CAPTURED_DATA_BUFFER;
+struct captured_data_buffer
+{
+    char buffer[CAPTURED_DATA_BUFFER_SIZE];
+    int remaining_buffer_size;
+
+    int write_offset;
+    int read_offset;
+};
+
 typedef struct job_session JOB_SESSION;
 struct job_session
 {
@@ -110,7 +140,17 @@ struct job_session
 
     int sockfd;
 
-    bool is_fragmented;
+    pthread_t job_thread;
+    JOB_THREAD_ARGS job_thread_args;
+
+    bool job_thread_is_alive;
+
+    CAPTURED_DATA_BUFFER *captured_data_buffer_array[CAPTURED_DATA_BUFFER_ARRAY_SIZE];
+    int write_idx;
+    int read_idx;
+
+    // error handling
+    char result_code;
 };
 
 typedef struct control_session CONTROL_SESSION;
