@@ -14,6 +14,8 @@ struct job_handle
     int ID;
 
     JOB_SESSION job_session;
+
+    JSON_TYPE_RESULT json_type_result;
 };
 
 typedef struct ctc_handle CTC_HANDLE;

@@ -479,7 +479,7 @@ error:
     return CTC_FAILURE;
 }
 
-int fetch_capture_transaction (int ctc_handle_id, int job_handle_id, char *result_buffer, int result_buffer_size, int* required_buffer_size)
+int fetch_capture_transaction (int ctc_handle_id, int job_handle_id, char *result_buffer, int result_buffer_size, int *result_data_size)
 {
     CTC_HANDLE *ctc_handle;
     JOB_HANDLE *job_handle;
@@ -494,7 +494,19 @@ int fetch_capture_transaction (int ctc_handle_id, int job_handle_id, char *resul
         goto error;
     }
 
-    // 
+    if (IS_FAILURE (read_captured_data_in_json_format (job_handle->job_session, &job_handle->json_type_result)))
+    {
+        goto error;
+    }
+
+    if (job_handle->json_type_result.data_count != 0)
+    {
+        // buffer 에 data copy
+    }
+    else
+    {
+        *result_data_size = 0;
+    }
 
     return CTC_SUCCESS;
 

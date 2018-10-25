@@ -13,8 +13,10 @@
 #define CTCP_PACKET_HEADER_SIZE 16
 #define CTCP_MAX_DATA_PAYLOAD_SIZE (CTCP_PACKET_SIZE - CTCP_PACKET_HEADER_SIZE)
 
-#define CAPTURED_DATA_BUFFER_ARRAY_SIZE 1000
+#define CAPTURED_DATA_BUFFER_COUNT 1000
 #define CAPTURED_DATA_BUFFER_SIZE (CTCP_PACKET_SIZE * 50)
+
+#define JSON_BUFFER_SIZE (CTCP_PACKET_SIZE * 3)
 
 typedef enum ctcp_operation_id CTCP_OP_ID;
 enum ctcp_operation_id
@@ -145,7 +147,7 @@ struct job_session
 
     bool job_thread_is_alive;
 
-    CAPTURED_DATA_BUFFER *captured_data_buffer_array[CAPTURED_DATA_BUFFER_ARRAY_SIZE];
+    CAPTURED_DATA_BUFFER *captured_data_buffer[CAPTURED_DATA_BUFFER_COUNT];
     int write_idx;
     int read_idx;
 
@@ -165,6 +167,20 @@ struct control_session
     char ip[16]; /* struct in_addr */
     unsigned short port; /* htons, sin_port */
 };
+
+typedef struct json_type_result JSON_TYPE_RESULT;
+struct json_type_result
+{
+    char json_buffer[JSON_BUFFER_SIZE]; // 이 버퍼에 한 패킷의 item을 모두 json 형태로 변경
+    char *read_pos[100]; // 나중에 alloc 으로 바꾸자
+    int  read_len[100];
+
+    int data_count;
+
+    int cur_idx;
+
+    bool is_fragmented; // packet이 fragmented 이면 무조건 fragmented, 아니면 사용자가 넘겨준 buffer가 작아서...
+}
 
 int open_control_session (CONTROL_SESSION *control_session, CTC_CONN_TYPE conn_type);
 int close_control_session (CONTROL_SESSION *control_session);

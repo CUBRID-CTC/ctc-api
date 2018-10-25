@@ -162,16 +162,20 @@ error:
     return CTC_FAILURE;
 }
 
-// 메모리에 몇 개의 결과가 있는지 알아야
-int ctc_fetch_capture_transaction (int ctc_handle, int job_descriptor, char *result_buffer, int result_buffer_size, int* required_buffer_size)
+// required_buffer_size --> result_data_size 로 변경
+// return success 를 3개로 분류
+// success --> transaction 완성
+// success fragmented --> 더 읽어야 완성
+// success but no data --> 읽을 데이터가 없다.
+int ctc_fetch_capture_transaction (int ctc_handle, int job_descriptor, char *result_buffer, int result_buffer_size, int* result_data_size)
 {
-    if (IS_NULL (result_buffer) || IS_NULL (required_buffer_size) ||
+    if (IS_NULL (result_buffer) || IS_NULL (result_data_size) ||
         result_buffer_size <= 0)
     {
         goto error;
     }
 
-    if (IS_FAILURE (fetch_capture_transaction (ctc_handle, job_descriptor, result_buffer, result_buffer_size, required_buffer_size)))
+    if (IS_FAILURE (fetch_capture_transaction (ctc_handle, job_descriptor, result_buffer, result_buffer_size, result_data_size)))
     {
         goto error;
     }
