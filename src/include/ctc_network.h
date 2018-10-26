@@ -13,8 +13,8 @@
 #define CTCP_PACKET_HEADER_SIZE 16
 #define CTCP_MAX_DATA_PAYLOAD_SIZE (CTCP_PACKET_SIZE - CTCP_PACKET_HEADER_SIZE)
 
-#define CAPTURED_DATA_BUFFER_COUNT 1000
-#define CAPTURED_DATA_BUFFER_SIZE (CTCP_PACKET_SIZE * 50)
+#define MAX_DATA_BUFFER_COUNT 1000
+#define DATA_BUFFER_SIZE (CTCP_PACKET_SIZE * 50)
 
 #define JSON_BUFFER_SIZE (CTCP_PACKET_SIZE * 3)
 
@@ -26,45 +26,59 @@ enum ctcp_operation_id
     CTCP_DESTROY_CONTROL_SESSION        = 0x03,
     CTCP_DESTROY_CONTROL_SESSION_RESULT = 0x04,
     CTCP_CREATE_JOB_SESSION             = 0x05,
+
     CTCP_CREATE_JOB_SESSION_RESULT      = 0x06,
     CTCP_DESTROY_JOB_SESSION            = 0x07,
     CTCP_DESTROY_JOB_SESSION_RESULT     = 0x08,
     CTCP_REQUEST_JOB_STATUS             = 0x09,
     CTCP_REQUEST_JOB_STATUS_RESULT      = 0x0A,
+
     CTCP_REQUEST_SERVER_STATUS          = 0x0B,
     CTCP_REQUEST_SERVER_STATUS_RESULT   = 0x0C,
     CTCP_REGISTER_TABLE                 = 0x0D,
     CTCP_REGISTER_TABLE_RESULT          = 0x0E,
     CTCP_UNREGISTER_TABLE               = 0x0F,
+
     CTCP_UNREGISTER_TABLE_RESULT        = 0x10,
     CTCP_SET_JOB_ATTRIBUTE              = 0x11,
     CTCP_SET_JOB_ATTRIBUTE_RESULT       = 0x12,
-    CTCP_START_CAPTURE                  = 0x81,
-    CTCP_START_CAPTURE_RESULT           = 0x82,
-    CTCP_CAPTURED_DATA_RESULT           = 0x83,
-    CTCP_STOP_CAPTURE                   = 0x84,
-    CTCP_STOP_CAPTURE_RESULT            = 0x85
+    CTCP_START_CAPTURE                  = 0x80,
+    CTCP_START_CAPTURE_RESULT           = 0x81,
+
+    CTCP_CAPTURED_DATA_RESULT           = 0x82,
+    CTCP_STOP_CAPTURE                   = 0x83,
+    CTCP_STOP_CAPTURE_RESULT            = 0x84
 };
 
 enum ctcp_result_code
 {
-    CTC_RC_SUCCESS                       = 0x00,
-    CTC_RC_SUCCESS_FRAGMENTED            = 0x01,
-    CTC_RC_FAILED                        = 0x02,
-    CTC_RC_FAILED_WRONG_PACKET           = 0x03,
-    CTC_RC_FAILED_OUT_OF_RANGE           = 0x04,
-    CTC_RC_FAILED_UNKNOWN_OPERATION      = 0x05,
-    CTC_RC_FAILED_INVALID_HANDLE         = 0x06,
-    CTC_RC_FAILED_CREATE_SESSION         = 0x07,
-    CTC_RC_FAILED_SESSION_NOT_EXIST      = 0x08,
-    CTC_RC_FAILED_SESSION_IS_BUSY        = 0x09,
-    CTC_RC_FAILED_SESSION_CLOSE          = 0x10,
-    CTC_RC_FAILED_NO_MORE_JOB_ALLOWED    = 0x11,
-    CTC_RC_FAILED_INVALID_JOB            = 0x12,
-    CTC_RC_FAILED_UNREGISTERED_TABLE     = 0x13,
-    CTC_RC_FAILED_INVALID_JOB_ATTR       = 0x14,
-    CTC_RC_FAILED_INVALID_JOB_ATTR_VALUE = 0x15,
-    CTC_RC_FAILED_NOT_SUPPORTED_FILTER   = 0x50
+    CTC_RC_SUCCESS                             = 0x00,
+    CTC_RC_SUCCESS_FRAGMENTED                  = 0x01,
+    CTC_RC_FAILED                              = 0x02,
+    CTC_RC_FAILED_WRONG_PACKET                 = 0x03,
+    CTC_RC_FAILED_OUT_OF_RANGE                 = 0x04,
+
+    CTC_RC_FAILED_UNKNOWN_OPERATION            = 0x05,
+    CTC_RC_FAILED_INVALID_HANDLE               = 0x06,
+    CTC_RC_FAILED_INSUFFICIENT_SERVER_RESOURCE = 0x07,
+    CTC_RC_FAILED_CREATE_SESSION               = 0x08,
+    CTC_RC_FAILED_SESSION_NOT_EXIST            = 0x09,
+    
+    CTC_RC_FAILED_SESSION_IS_BUSY              = 0x0A,
+    CTC_RC_FAILED_SESSION_CLOSE                = 0x0B,
+    CTC_RC_FAILED_NO_MORE_JOB_ALLOWED          = 0x0C,
+    CTC_RC_FAILED_INVALID_JOB                  = 0x0D,
+    CTC_RC_FAILED_INVALID_JOB_STATUS           = 0x0E,
+
+    CTC_RC_FAILED_INVALID_TABLE_NAME           = 0x0F,
+    CTC_RC_FAILED_TABLE_ALREADY_EXIST          = 0x10,
+    CTC_RC_FAILED_UNREGISTERED_TABLE           = 0x11,
+    CTC_RC_FAILED_JOB_ATTR_NOT_EXIST           = 0x12,
+    CTC_RC_FAILED_INVALID_JOB_ATTR_VALUE       = 0x13,
+
+    CTC_RC_FAILED_NOT_SUPPORTED_FILTER         = 0x14,
+    CTC_RC_FAILED_JOB_ALREADY_STARTED          = 0x15,
+    CTC_RC_FAILED_JOB_ALREADY_STOPPED          = 0x16
 };
 
 typedef enum ctc_conn_type CTC_CONN_TYPE;
@@ -121,18 +135,18 @@ struct ctcp
 typedef struct job_thread_args JOB_THREAD_ARGS;
 struct job_thread_args
 {
-    CONTROL_SESSION *control_session;
-    JOB_SESSION *job_session;
+    void *arg_1;
+    void *arg_2;
 };
 
-typedef struct captured_data_buffer CAPTURED_DATA_BUFFER;
-struct captured_data_buffer
+typedef struct data_buffer DATA_BUFFER;
+struct data_buffer
 {
-    char buffer[CAPTURED_DATA_BUFFER_SIZE];
+    char buffer[DATA_BUFFER_SIZE];
     int remaining_buffer_size;
 
-    int write_offset;
-    int read_offset;
+    char *write_pos;
+    char *read_pos;
 };
 
 typedef struct job_session JOB_SESSION;
@@ -147,7 +161,7 @@ struct job_session
 
     bool job_thread_is_alive;
 
-    CAPTURED_DATA_BUFFER *captured_data_buffer[CAPTURED_DATA_BUFFER_COUNT];
+    DATA_BUFFER *data_buffer_array[MAX_DATA_BUFFER_COUNT];
     int write_idx;
     int read_idx;
 
