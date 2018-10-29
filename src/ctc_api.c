@@ -169,13 +169,13 @@ error:
 // success but no data --> 읽을 데이터가 없다.
 int ctc_fetch_capture_transaction (int ctc_handle, int job_descriptor, char *result_buffer, int result_buffer_size, int* result_data_size)
 {
-    if (IS_NULL (result_buffer) || IS_NULL (result_data_size) ||
-        result_buffer_size <= 0)
+    if (IS_NULL (result_buffer) || result_buffer_size <= 0 ||
+        IS_NULL (result_data_size))
     {
         goto error;
     }
 
-    if (IS_FAILURE (fetch_capture_transaction (ctc_handle, job_descriptor, result_buffer, result_buffer_size, result_data_size)))
+    if (IS_FAILURE (read_capture_transaction (ctc_handle, job_descriptor, result_buffer, result_buffer_size, result_data_size)))
     {
         goto error;
     }

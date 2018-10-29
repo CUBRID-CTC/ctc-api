@@ -16,7 +16,7 @@
 #define MAX_DATA_BUFFER_COUNT 1000
 #define DATA_BUFFER_SIZE (CTCP_PACKET_SIZE * 50)
 
-#define JSON_BUFFER_SIZE (CTCP_PACKET_SIZE * 3)
+#define MAX_JSON_FORM_RESULT_COUNT 100
 
 typedef enum ctcp_operation_id CTCP_OP_ID;
 enum ctcp_operation_id
@@ -79,13 +79,6 @@ enum ctcp_result_code
     CTC_RC_FAILED_NOT_SUPPORTED_FILTER         = 0x14,
     CTC_RC_FAILED_JOB_ALREADY_STARTED          = 0x15,
     CTC_RC_FAILED_JOB_ALREADY_STOPPED          = 0x16
-};
-
-typedef enum ctc_conn_type CTC_CONN_TYPE;
-enum ctc_conn_type
-{
-    CTC_CONN_TYPE_DEFAULT   = 0,
-    CTC_CONN_TYPE_CTRL_ONLY = 1
 };
 
 typedef enum ctc_stmt_type CTC_STMT_TYPE;
@@ -156,10 +149,12 @@ struct job_session
 
     int sockfd;
 
-    pthread_t job_thread;
-    JOB_THREAD_ARGS job_thread_args;
+    CTC_QUIT_JOB_CONDITION quit_job_condition;
 
     bool job_thread_is_alive;
+
+    pthread_t job_thread;
+    JOB_THREAD_ARGS job_thread_args;
 
     DATA_BUFFER *data_buffer_array[MAX_DATA_BUFFER_COUNT];
     int write_idx;
@@ -182,19 +177,15 @@ struct control_session
     unsigned short port; /* htons, sin_port */
 };
 
-typedef struct json_type_result JSON_TYPE_RESULT;
-struct json_type_result
+typedef struct json_form_result JSON_FORM_RESULT;
+struct json_form_result
 {
-    char json_buffer[JSON_BUFFER_SIZE]; // 이 버퍼에 한 패킷의 item을 모두 json 형태로 변경
-    char *read_pos[100]; // 나중에 alloc 으로 바꾸자
-    int  read_len[100];
+    char *result[MAX_JSON_FORM_RESULT_COUNT];
 
-    int data_count;
+    int result_count;
 
-    int cur_idx;
-
-    bool is_fragmented; // packet이 fragmented 이면 무조건 fragmented, 아니면 사용자가 넘겨준 buffer가 작아서...
-}
+    int read_idx;
+};
 
 int open_control_session (CONTROL_SESSION *control_session, CTC_CONN_TYPE conn_type);
 int close_control_session (CONTROL_SESSION *control_session);

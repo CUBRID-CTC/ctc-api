@@ -168,7 +168,7 @@ error:
     return CTC_FAILURE;
 }
 
-int connect_server (int conn_type, char *url, int *ctc_handle_id)
+int connect_server (CTC_CONN_TYPE conn_type, char *url, int *ctc_handle_id)
 {
     CTC_HANDLE *ctc_handle;
 
@@ -420,6 +420,19 @@ error:
     return CTC_FAILURE;
 }
 
+void init_json_form_result (JSON_FORM_RESULT *json_form_result)
+{
+    int i;
+
+    for (i = 0; i < MAX_JSON_FORM_RESULT_COUNT; i ++)
+    {
+        json_form_result->result[i] = NULL;
+    }
+
+    json_form_result->result_count = 0;
+    json_form_result->read_idx = 0;
+}
+
 int start_capture (int ctc_handle_id, int job_handle_id)
 {
     CTC_HANDLE *ctc_handle;
@@ -440,6 +453,8 @@ int start_capture (int ctc_handle_id, int job_handle_id)
         goto error;
     }
 
+    init_json_form_result (&job_handle->json_form_result);
+
     return CTC_SUCCESS;
 
 error:
@@ -447,7 +462,7 @@ error:
     return CTC_FAILURE;
 }
 
-int stop_capture (int ctc_handle_id, int job_handle_id)
+int stop_capture (int ctc_handle_id, int job_handle_id, CTC_QUIT_JOB_CONDITION quit_job_condition)
 {
     CTC_HANDLE *ctc_handle;
     JOB_HANDLE *job_handle;
@@ -462,12 +477,7 @@ int stop_capture (int ctc_handle_id, int job_handle_id)
         goto error;
     }
 
-    if (IS_FAILURE (stop_capture_for_job (&ctc_handle->control_session, &job_handle->job_session)))
-    {
-        goto error;
-    }
-
-    if (IS_FAILURE (destroy_job_thread (ctc_handle, job_handle)))
+    if (IS_FAILURE (stop_capture_for_job (&ctc_handle->control_session, &job_handle->job_session, quit_job_condition)))
     {
         goto error;
     }
@@ -479,33 +489,54 @@ error:
     return CTC_FAILURE;
 }
 
-int fetch_capture_transaction (int ctc_handle_id, int job_handle_id, char *result_buffer, int result_buffer_size, int *result_data_size)
+bool is_exist_json_form_result (JSON_FORM_RESULT *json_form_result)
 {
-    CTC_HANDLE *ctc_handle;
-    JOB_HANDLE *job_handle;
-
-    if (IS_FAILURE (find_ctc_handle (ctc_handle_id, &ctc_handle)))
+    if (json_form_result->read_idx < json_form_result->result_count)
     {
-        goto error;
-    }
-
-    if (IS_FAILURE (find_job_handle (ctc_handle, job_handle_id, &job_handle)))
-    {
-        goto error;
-    }
-
-    if (IS_FAILURE (read_captured_data_in_json_format (job_handle->job_session, &job_handle->json_type_result)))
-    {
-        goto error;
-    }
-
-    if (job_handle->json_type_result.data_count != 0)
-    {
-        // buffer 에 data copy
+        return true;
     }
     else
     {
-        *result_data_size = 0;
+        return false;
+    }
+}
+
+int read_capture_transaction (int ctc_handle_id, int job_handle_id, char *buffer, int buffer_size, int *data_size)
+{
+    CTC_HANDLE *ctc_handle;
+    JOB_HANDLE *job_handle;
+
+    if (IS_FAILURE (find_ctc_handle (ctc_handle_id, &ctc_handle)))
+    {
+        goto error;
+    }
+
+    if (IS_FAILURE (find_job_handle (ctc_handle, job_handle_id, &job_handle)))
+    {
+        goto error;
+    }
+
+    while (1)
+    {
+        if (is_exist_json_form_result (&job_handle->json_form_result))
+        {
+            // copy
+        }
+        else
+        {
+            if (IS_FAILURE (read_capture_transaction_in_json_form (job_handle->job_session, &job_handle->json_form_result)))
+            {
+                goto error;
+            }
+
+        if (job_handle->json_type_result.data_count != 0)
+        {
+            // buffer 에 data copy
+        }
+        else
+        {
+            *result_data_size = 0;
+        }
     }
 
     return CTC_SUCCESS;

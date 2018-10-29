@@ -1,8 +1,7 @@
-#ifndef _CTC_API_H_
-#define _CTC_API_H_
+#ifndef _CTC_CORE_H_
+#define _CTC_CORE_H_
 
 #include <pthread.h>
-#include "ctc_common.h"
 #include "ctc_network.h"
 
 #define MAX_CTC_HANDLE_COUNT 100 /* CTC_SESSION_GROUP_MAX */
@@ -15,7 +14,7 @@ struct job_handle
 
     JOB_SESSION job_session;
 
-    JSON_TYPE_RESULT json_type_result;
+    JSON_FORM_RESULT json_form_result;
 };
 
 typedef struct ctc_handle CTC_HANDLE;

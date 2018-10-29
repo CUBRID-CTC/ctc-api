@@ -1,6 +1,8 @@
 #ifndef _CTC_COMMON_H_
 #define _CTC_COMMON_H_
 
+#include "ctc_api.h"
+
 #define CTC_SUCCESS 0
 #define CTC_FAILURE -1
 
