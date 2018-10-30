@@ -16,7 +16,7 @@
 #define MAX_DATA_BUFFER_COUNT 1000
 #define DATA_BUFFER_SIZE (CTCP_PACKET_SIZE * 50)
 
-#define MAX_JSON_FORM_RESULT_COUNT 100
+#define MAX_JSON_FORMAT_RESULT_COUNT 100
 
 typedef enum ctcp_operation_id CTCP_OP_ID;
 enum ctcp_operation_id
@@ -177,14 +177,16 @@ struct control_session
     unsigned short port; /* htons, sin_port */
 };
 
-typedef struct json_form_result JSON_FORM_RESULT;
-struct json_form_result
+typedef struct json_format_result JSON_FORMAT_RESULT;
+struct json_format_result
 {
-    char *result[MAX_JSON_FORM_RESULT_COUNT];
+    char *result[MAX_JSON_FORMAT_RESULT_COUNT];
 
     int result_count;
 
     int read_idx;
+
+    bool is_fragmented;
 };
 
 int open_control_session (CONTROL_SESSION *control_session, CTC_CONN_TYPE conn_type);

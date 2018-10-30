@@ -420,17 +420,18 @@ error:
     return CTC_FAILURE;
 }
 
-void init_json_form_result (JSON_FORM_RESULT *json_form_result)
+void init_json_format_result (JSON_FORM_RESULT *json_format_result)
 {
     int i;
 
     for (i = 0; i < MAX_JSON_FORM_RESULT_COUNT; i ++)
     {
-        json_form_result->result[i] = NULL;
+        json_format_result->result[i] = NULL;
     }
 
-    json_form_result->result_count = 0;
-    json_form_result->read_idx = 0;
+    json_format_result->result_count = 0;
+    json_format_result->read_idx = -1;
+    json_format_result->is_fragmented = false;
 }
 
 int start_capture (int ctc_handle_id, int job_handle_id)
@@ -453,7 +454,7 @@ int start_capture (int ctc_handle_id, int job_handle_id)
         goto error;
     }
 
-    init_json_form_result (&job_handle->json_form_result);
+    init_json_format_result (&job_handle->json_format_result);
 
     return CTC_SUCCESS;
 
@@ -489,9 +490,9 @@ error:
     return CTC_FAILURE;
 }
 
-bool is_exist_json_form_result (JSON_FORM_RESULT *json_form_result)
+bool is_exist_json_format_result (JSON_FORM_RESULT *json_format_result)
 {
-    if (json_form_result->read_idx < json_form_result->result_count)
+    if (json_format_result->result_count)
     {
         return true;
     }
@@ -518,24 +519,25 @@ int read_capture_transaction (int ctc_handle_id, int job_handle_id, char *buffer
 
     while (1)
     {
-        if (is_exist_json_form_result (&job_handle->json_form_result))
+        if (is_exist_json_format_result (&job_handle->json_format_result))
         {
             // copy
+            
+            break;
         }
         else
         {
-            if (IS_FAILURE (read_capture_transaction_in_json_form (job_handle->job_session, &job_handle->json_form_result)))
+            if (IS_FAILURE (read_capture_transaction_in_json_format (&job_handle->job_session, &job_handle->json_format_result)))
             {
                 goto error;
             }
 
-        if (job_handle->json_type_result.data_count != 0)
-        {
-            // buffer 에 data copy
-        }
-        else
-        {
-            *result_data_size = 0;
+            if (job_handle->json_format_result.result_count == 0)
+            {
+                *result_data_size = 0;
+
+                break;
+            }
         }
     }
 
