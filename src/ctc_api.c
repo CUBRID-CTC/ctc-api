@@ -167,20 +167,34 @@ error:
 // success --> transaction 완성
 // success fragmented --> 더 읽어야 완성
 // success but no data --> 읽을 데이터가 없다.
-int ctc_fetch_capture_transaction (int ctc_handle, int job_descriptor, char *result_buffer, int result_buffer_size, int* result_data_size)
+int ctc_fetch_capture_transaction (int ctc_handle, int job_descriptor, char *result_buffer, int result_buffer_size, int *result_data_size)
 {
+    bool is_fragmented;
+
     if (IS_NULL (result_buffer) || result_buffer_size <= 0 ||
         IS_NULL (result_data_size))
     {
         goto error;
     }
 
-    if (IS_FAILURE (read_capture_transaction (ctc_handle, job_descriptor, result_buffer, result_buffer_size, result_data_size)))
+    if (IS_FAILURE (read_capture_transaction (ctc_handle, job_descriptor, result_buffer, result_buffer_size, result_data_size, &is_fragmented)))
     {
         goto error;
     }
 
-    return CTC_SUCCESS;
+    if (result_data_size == 0)
+    {
+        // need buffer size 입력
+    }
+
+    if (is_fragmented)
+    {
+        return CTC_SUCCESS_FRAGMENTED;
+    }
+    else
+    {
+        return CTC_SUCCESS;
+    }
 }
 
 int ctc_check_job_status (int ctc_handle, int job_descriptor, int *job_status)

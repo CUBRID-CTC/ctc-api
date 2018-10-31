@@ -3,8 +3,6 @@
 
 #include "ctc_api.h"
 
-#define CTC_SUCCESS 0
-#define CTC_FAILURE -1
 
 #define IS_SUCCESS(a) (a == CTC_SUCCESS)
 #define IS_FAILURE(a) (a != CTC_SUCCESS)

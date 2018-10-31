@@ -9,12 +9,12 @@
 #define CTCP_PATCH_VERSION 0
 #define CTCP_BUILD_VERSION 0
 
-#define CTCP_PACKET_SIZE 4096
+#define CTCP_MAX_PACKET_SIZE 4096
 #define CTCP_PACKET_HEADER_SIZE 16
-#define CTCP_MAX_DATA_PAYLOAD_SIZE (CTCP_PACKET_SIZE - CTCP_PACKET_HEADER_SIZE)
+#define CTCP_MAX_DATA_PAYLOAD_SIZE (CTCP_MAX_PACKET_SIZE - CTCP_PACKET_HEADER_SIZE)
 
 #define MAX_DATA_BUFFER_COUNT 1000
-#define DATA_BUFFER_SIZE (CTCP_PACKET_SIZE * 50)
+#define DATA_BUFFER_SIZE (CTCP_MAX_PACKET_SIZE * 50)
 
 #define MAX_JSON_FORMAT_RESULT_COUNT 100
 
@@ -128,8 +128,8 @@ struct ctcp
 typedef struct job_thread_args JOB_THREAD_ARGS;
 struct job_thread_args
 {
-    void *arg_1;
-    void *arg_2;
+    void *control_session;
+    void *job_session;
 };
 
 typedef struct data_buffer DATA_BUFFER;
@@ -138,7 +138,7 @@ struct data_buffer
     char buffer[DATA_BUFFER_SIZE];
     int remaining_buffer_size;
 
-    char *write_pos;
+    volatile char *write_pos;
     char *read_pos;
 };
 
@@ -157,7 +157,7 @@ struct job_session
     JOB_THREAD_ARGS job_thread_args;
 
     DATA_BUFFER *data_buffer_array[MAX_DATA_BUFFER_COUNT];
-    int write_idx;
+    volatile int write_idx;
     int read_idx;
 
     // error handling
@@ -182,8 +182,7 @@ struct json_format_result
 {
     char *result[MAX_JSON_FORMAT_RESULT_COUNT];
 
-    int result_count;
-
+    int write_idx;
     int read_idx;
 
     bool is_fragmented;

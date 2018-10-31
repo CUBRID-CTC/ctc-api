@@ -626,6 +626,28 @@ error:
     return CTC_FAILURE;
 }
 
+int cleanup_data_buffer_array (JOB_SESSION *job_session)
+{
+    int i;
+
+    for (i = 0; i < MAX_DATA_BUFFER_COUNT; i ++)
+    {
+        if (IS_NOT_NULL (job_session->data_buffer_array[i]))
+        {
+            free (job_session->data_buffer_array[i]);
+        }
+    }
+
+    job_session->write_idx = 0;
+    job_session->read_idx = 0;
+
+    return CTC_SUCCESS;
+
+error:
+
+    return CTC_FAILURE;
+}
+
 void init_data_buffer (DATA_BUFFER *data_buffer)
 {
     memset (data_buffer->buffer, 0, DATA_BUFFER_SIZE);
@@ -769,8 +791,8 @@ void *job_thread_main (void *arg)
 {
     JOB_THREAD_ARGS *job_thread_args = (JOB_THREAD_ARGS *)arg;
 
-    CTC_HANDLE *control_session = job_thread_args->arg_1;
-    JOB_HANDLE *job_session = job_thread_args->arg_2;
+    CTC_HANDLE *control_session = job_thread_args->control_session;
+    JOB_HANDLE *job_session = job_thread_args->job_session;
 
     job_session->job_thread_is_alive = true;
 
@@ -784,15 +806,15 @@ void *job_thread_main (void *arg)
         goto error;
     }
 
+    // 소켓 정리, 종료시 자원 정리
+    
     job_session->job_thread_is_alive = false;
-
-    // 소켓 정리
 
     return CTC_SUCCESS;
 
 error:
 
-    // 소켓 정리
+    // 소켓 정리, 종료시 자원 정리
 
     job_session->job_thread_is_alive = false;
 
@@ -801,15 +823,10 @@ error:
 
 int create_job_thread (CONTROL_SESSION *control_session, JOB_SESSION *job_session)
 {
-    job_session->job_thread_args.arg_1 = control_session;
-    job_session->job_thread_args.arg_2 = job_session;
+    job_session->job_thread_args.control_session = control_session;
+    job_session->job_thread_args.job_session = job_session;
 
     if (IS_FAILURE (pthread_create (&job_session->job_thread, NULL, job_thread_main, (void *)&job_session->job_thread_args)))
-    {
-        goto error;
-    }
-
-    if (IS_FAILURE (pthread_detach (job_session->job_thread)))
     {
         goto error;
     }
@@ -823,7 +840,14 @@ error:
 
 int destroy_job_thread (JOB_SESSION *job_session)
 {
+    int exit_status;
+
     job_session->job_thread_is_alive = false;
+
+    if (IS_FAILURE (pthread_join (job_session->job_thread, (void **)&exit_status)))
+    {
+        goto error;
+    }
 
     return CTC_SUCCESS;
 
@@ -879,6 +903,16 @@ int stop_capture_for_job (CONTROL_SESSION *control_session, JOB_SESSION *job_ses
         {
             goto error;
         }
+
+        if (IS_FAILURE (cleanup_data_buffer_array (job_session)))
+        {
+            goto error;
+        }
+    }
+    else
+    {
+        // 이번에 지원 안함
+        goto error;
     }
 
     set_quit_job_condition (job_session, quit_job_condition);
@@ -890,49 +924,83 @@ error:
     return CTC_FAILURE;
 }
 
-bool is_exist_data (JOB_SESSION *job_session)
-{
-    DATA_BUFFER *data_buffer;
-
-    if (job_session->read_idx != job_session->write_idx)
-    {
-        return true;
-    }
-    else
-    {
-        data_buffer = job_session->data_buffer_array[job_session->read_idx];
-
-        if (data_buffer->read_pos < data_buffer->write_pos)
-        {
-            return true;
-        }
-    }
-
-    return false;
-}
-
 void reinit_json_format_result (JSON_FORMAT_RESULT *json_format_result)
 {
     int i;
 
-    for (i = 0; i < json_format_result->result_count; i ++)
+    for (i = 0; i < json_format_result->write_idx; i ++)
     {
         free (json_format_result->result[i]);
         json_format_result->result[i] = NULL;
     }
 
-    json_format_result->result_count = 0;
-    json_format_result->read_idx = -1;
+    json_format_result->write_idx = 0;
+    json_format_result->read_idx = 0;
     json_format_result->is_fragmented = false;
 }
 
 char *get_read_pos (JOB_SESSION *job_session)
 {
     DATA_BUFFER *data_buffer;
+    bool is_exist_data;
+
+    is_exist_data = true;
+
+    while (1)
+    {
+        if (job_session->read_idx != job_session->write_idx)
+        {
+            data_buffer = job_session->data_buffer_array[job_session->read_idx];
+
+            if (data_buffer->read_pos < data_buffer->write_pos)
+            {
+                break;
+            }
+            else if (data_buffer->read_pos == data_buffer->write_pos)
+            {
+                // 해당 버퍼는 끝까지 읽었다는 것
+                free (data_buffer);
+                job_session->read_idx ++;
+            }
+            else
+            {
+                // assert
+            }
+        }
+        else if (job_session->read_idx == job_session->write_idx)
+        {
+            data_buffer = job_session->data_buffer_array[job_session->read_idx];
+
+            if (data_buffer->read_pos < data_buffer->write_pos)
+            {
+                break;
+            }
+            else if (data_buffer->read_pos == data_buffer->write_pos)
+            {
+                is_exist_data = false;
+            }
+            else
+            {
+                // assert
+            }
+        }
+    }
+
+    return is_exist_data ? data_buffer->read_pos : NULL;
+}
+
+void set_read_pos (JOB_SESSION *job_session, char *next_read_pos)
+{
+    DATA_BUFFER *data_buffer;
 
     data_buffer = job_session->data_buffer_array[job_session->read_idx];
 
-    return data_buffer->read_pos;
+    data_buffer->read_pos = next_read_pos;
+
+    if (data_buffer->read_pos > data_buffer->read_pos)
+    {
+        // assert
+    }
 }
 
 int read_data_header (char **read_pos_p, JSON_FORMAT_RESULT *json_format_result)
@@ -1034,6 +1102,11 @@ int read_and_write_user_name (char **read_pos_p, char **write_pos_p)
     memcpy (&user_name_len, read_pos, sizeof (int));
     read_pos += sizeof (int);
 
+    if (user_name_len <= 0)
+    {
+        goto error;
+    }
+
     memcpy (write_pos, read_pos, user_name_len);
     read_pos += user_name_len;
     write_pos += user_name_len;
@@ -1064,6 +1137,11 @@ int read_and_write_table_name (char **read_pos_p, char **write_pos_p)
 
     memcpy (&table_name_len, read_pos, sizeof (int));
     read_pos += sizeof (int);
+
+    if (table_name_len <= 0)
+    {
+        goto error;
+    }
 
     memcpy (write_pos, read_pos, table_name_len);
     read_pos += table_name_len;
@@ -1150,11 +1228,21 @@ int read_and_write_columns (char **read_pos_p, char **write_pos_p)
     memcpy (&number_of_column, read_pos, sizeof (int));
     read_pos += sizeof (int);
 
+    if (number_of_column <= 0)
+    {
+        goto error;
+    }
+
     for (i = 0; i < number_of_column; i ++)
     {
         /* column name */
         memcpy (&column_name_len, read_pos, sizeof (int));
         read_pos += sizeof (int);
+
+        if (column_name_len <= 0)
+        {
+            goto error;
+        }
 
         memcpy (write_pos, read_pos, column_name_len);
         read_pos += column_name_len;
@@ -1166,6 +1254,11 @@ int read_and_write_columns (char **read_pos_p, char **write_pos_p)
         /* column value */
         memcpy (&column_value_len, read_pos, sizeof (int));
         read_pos += sizeof (int);
+
+        if (column_value_len <= 0 )
+        {
+            goto error;
+        }
 
         memcpy (write_pos, read_pos, column_value_len);
         read_pos += column_value_len;
@@ -1183,11 +1276,22 @@ int read_and_write_columns (char **read_pos_p, char **write_pos_p)
         }
     }
 
-    write_pos[0] = '\0';
+    write_pos[0] = '\0'; // 문자열로 만들어 준다.
     write_pos ++;
 
     *read_pos_p = read_pos;
     *write_pos_p = write_pos;
+
+    return CTC_SUCCESS;
+
+error:
+
+    return CTC_FAILURE;
+}
+
+int register_to_json_format_result (JSON_FORMAT_RESULT *json_format_result, char *json)
+{
+    json_format_result->result[json_format_result->write_idx ++] = strdup (json);
 
     return CTC_SUCCESS;
 
@@ -1206,6 +1310,10 @@ int convert_capture_transaction_to_json_format (JOB_SESSION *job_session, JSON_F
     char temp[4096];
 
     read_pos = get_read_pos (job_session);
+    if (IS_NULL (read_pos))
+    {
+        goto end;
+    }
 
     if (IS_FAILURE (read_data_header (&read_pos, json_format_result)))
     {
@@ -1213,6 +1321,11 @@ int convert_capture_transaction_to_json_format (JOB_SESSION *job_session, JSON_F
     }
 
     if (IS_FAILURE (read_number_of_items (&read_pos, &number_of_items)))
+    {
+        goto error;
+    }
+
+    if (number_of_items <= 0)
     {
         goto error;
     }
@@ -1251,10 +1364,15 @@ int convert_capture_transaction_to_json_format (JOB_SESSION *job_session, JSON_F
             goto error;
         }
 
-        // copy to json buffer
+        if (IS_FAILURE (register_to_json_format_result (json_format_result, temp)))
+        {
+            goto error;
+        }
     }
 
-    // move next_read_pos
+    set_read_pos (job_session, read_pos);
+
+end:
 
     return CTC_SUCCESS;
 
@@ -1265,24 +1383,16 @@ error:
 
 int read_capture_transaction_in_json_format (JOB_SESSION *job_session, JSON_FORMAT_RESULT *json_format_result)
 {
-    if (is_exist_data (job_session))
+    int retval;
+
+    if (IS_FAILURE (reinit_json_format_result (json_format_result)))
     {
-        if (IS_FAILURE (reinit_json_format_result (json_format_result)))
-        {
-            goto error;
-        }
-
-        if (IS_FAILURE (convert_capture_transaction_to_json_format (job_session, json_format_result)))
-        {
-            goto error;
-        }
-
-        // 다 읽고나면, 반드시 read_offset 옮겨줘야 하다.
-        // offset 말고 pos으로 기억하고 있는게 더 좋을 것 같다 바로 쓰게
+        goto error;
     }
-    else
+
+    if (IS_FAILURE (convert_capture_transaction_to_json_format (job_session, json_format_result)))
     {
-        json_format_result->result_count = 0;
+        goto error;
     }
 
     return CTC_SUCCESS;

@@ -1,6 +1,10 @@
 #ifndef _CTC_API_H_
 #define _CTC_API_H_
 
+#define CTC_SUCCESS             0
+#define CTC_SUCCESS_FRAGMENTED  1
+#define CTC_FAILURE            -1
+
 typedef enum ctc_conn_type CTC_CONN_TYPE;
 enum ctc_conn_type
 {

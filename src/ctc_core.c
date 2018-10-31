@@ -420,17 +420,35 @@ error:
     return CTC_FAILURE;
 }
 
-void init_json_format_result (JSON_FORM_RESULT *json_format_result)
+void init_json_format_result (JSON_FORMAT_RESULT *json_format_result)
 {
     int i;
 
-    for (i = 0; i < MAX_JSON_FORM_RESULT_COUNT; i ++)
+    for (i = 0; i < MAX_JSON_FORMAT_RESULT_COUNT; i ++)
     {
         json_format_result->result[i] = NULL;
     }
 
-    json_format_result->result_count = 0;
-    json_format_result->read_idx = -1;
+    json_format_result->write_idx = 0;
+    json_format_result->read_idx = 0;
+    json_format_result->is_fragmented = false;
+}
+
+int cleanup_json_format_result (JSON_FORMAT_RESULT *json_format_result)
+{
+    int i;
+
+    for (i = 0; i < MAX_JSON_FORMAT_RESULT_COUNT; i ++)
+    {
+        if (IS_NOT_NULL (json_format_result->result[i]))
+        {
+            free (json_format_result->result[i]);
+            json_format_result->result[i] = NULL;
+        }
+    }
+
+    json_format_result->write_idx = 0;
+    json_format_result->read_idx = 0;
     json_format_result->is_fragmented = false;
 }
 
@@ -483,6 +501,14 @@ int stop_capture (int ctc_handle_id, int job_handle_id, CTC_QUIT_JOB_CONDITION q
         goto error;
     }
 
+    if (quit_job_condition == CTC_QUIT_JOB_IMMEDIATELY)
+    {
+        if (IS_FAILURE (cleanup_json_format_result (&job_handle->json_format_result)))
+        {
+            goto error;
+        }
+    }
+
     return CTC_SUCCESS;
 
 error:
@@ -490,9 +516,9 @@ error:
     return CTC_FAILURE;
 }
 
-bool is_exist_json_format_result (JSON_FORM_RESULT *json_format_result)
+bool is_exist_json_format_result (JSON_FORMAT_RESULT *json_format_result)
 {
-    if (json_format_result->result_count)
+    if (json_format_result->read_idx < json_format_result->write_idx)
     {
         return true;
     }
@@ -502,10 +528,66 @@ bool is_exist_json_format_result (JSON_FORM_RESULT *json_format_result)
     }
 }
 
-int read_capture_transaction (int ctc_handle_id, int job_handle_id, char *buffer, int buffer_size, int *data_size)
+int copy_json_format_result_to_user_buffer (JSON_FORMAT_RESULT *json_format_result, char *buffer, int buffer_size, int *data_size, bool *is_fragmented)
+{
+    char *json;
+    int json_len;
+
+    int remaining_buffer_size;
+
+    remaining_buffer_size = buffer_size;
+
+    while (json_format_result->read_idx < json_format_result->write_idx)
+    {
+        json = json_format_result->result[json_format_result->read_idx];
+        json_len = strlen (json);
+
+        if (json_len < remaining_buffer_size)
+        {
+            memcpy (buffer, json, json_len);
+            buffer += json_len;
+
+            remaining_buffer_size -= json_len;
+
+            json_format_result->read_idx ++;
+        }
+        else
+        {
+            // 사용자 버퍼 크기가 적어서 데이터를 다 못 담는 경우는 무조건 fragmented
+            break;
+        }
+    }
+
+    // 변환된 모든 데이터를 다 읽은 경우
+    // if (ctcp_packet == fragmented)
+    // then
+    //     fragmented
+    // else
+    //     no fragmented
+    if (json_format_result->read_idx == json_format_result->write_idx)
+    {
+        *is_fragmented = json_format_result->is_fragmented;
+    }
+    else
+    {
+        *is_fragmented = true;
+    }
+
+    *data_size = buffer_size - remaining_buffer_size;
+
+    return CTC_SUCCESS;
+
+error:
+
+    return CTC_FAILURE;
+}
+
+int read_capture_transaction (int ctc_handle_id, int job_handle_id, char *buffer, int buffer_size, int *data_size, bool *is_fragmented)
 {
     CTC_HANDLE *ctc_handle;
     JOB_HANDLE *job_handle;
+
+    int retval;
 
     if (IS_FAILURE (find_ctc_handle (ctc_handle_id, &ctc_handle)))
     {
@@ -517,26 +599,29 @@ int read_capture_transaction (int ctc_handle_id, int job_handle_id, char *buffer
         goto error;
     }
 
-    while (1)
+    *data_size = 0;
+    *is_fragmented = false;
+
+    // 이미 변환되어 남이있는 json 결과들이 있는가?
+    if (is_exist_json_format_result (&job_handle->json_format_result))
     {
+        if (IS_FAILURE (copy_json_format_result_to_user_buffer (&job_handle->json_format_result, buffer, buffer_size, data_size, is_fragmented)))
+        {
+            goto error;
+        }
+    }
+    else
+    {
+        if (IS_FAILURE (read_capture_transaction_in_json_format (&job_handle->job_session, &job_handle->json_format_result)))
+        {
+            goto error;
+        }
+
         if (is_exist_json_format_result (&job_handle->json_format_result))
         {
-            // copy
-            
-            break;
-        }
-        else
-        {
-            if (IS_FAILURE (read_capture_transaction_in_json_format (&job_handle->job_session, &job_handle->json_format_result)))
+            if (IS_FAILURE (copy_json_format_result_to_user_buffer (&job_handle->json_format_result, buffer, buffer_size, data_size, is_fragmented)))
             {
                 goto error;
-            }
-
-            if (job_handle->json_format_result.result_count == 0)
-            {
-                *result_data_size = 0;
-
-                break;
             }
         }
     }
