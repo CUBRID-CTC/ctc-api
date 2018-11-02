@@ -8,7 +8,7 @@ int main (void)
 
     for (i = 0; i < 3000; i ++)
     {
-        ctc_handle = ctc_open_connection (0, "ctc:cubrid:192.168.1.100:20000");
+        ctc_handle = ctc_open_connection (0, "ctc:cubrid:192.168.1.77:20000");
         if (ctc_handle == -1)
         {
             printf ("[ERROR] ctc_open_connection ()\n");
