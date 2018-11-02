@@ -1,7 +1,9 @@
 #ifndef _CTC_NETWORK_H_
 #define _CTC_NETWORK_H_
 
+#include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 #include "ctc_common.h"
 
 #define CTCP_MAJOR_VERSION 1
@@ -13,10 +15,10 @@
 #define CTCP_PACKET_HEADER_SIZE 16
 #define CTCP_MAX_DATA_PAYLOAD_SIZE (CTCP_MAX_PACKET_SIZE - CTCP_PACKET_HEADER_SIZE)
 
-#define MAX_DATA_BUFFER_COUNT 1000
-#define DATA_BUFFER_SIZE (CTCP_MAX_PACKET_SIZE * 50)
+#define MAX_CAPTURE_TRANS_BUFFER_COUNT 1000
+#define CAPTURE_TRANS_BUFFER_SIZE (CTCP_MAX_PACKET_SIZE * 50)
 
-#define MAX_JSON_FORMAT_RESULT_COUNT 100
+#define MAX_JSON_TYPE_RESULT_COUNT 100
 
 typedef enum ctcp_operation_id CTCP_OP_ID;
 enum ctcp_operation_id
@@ -132,10 +134,10 @@ struct job_thread_args
     void *job_session;
 };
 
-typedef struct data_buffer DATA_BUFFER;
-struct data_buffer
+typedef struct capture_transaction_buffer CAPTURE_TRANS_BUFFER;
+struct capture_transaction_buffer
 {
-    char buffer[DATA_BUFFER_SIZE];
+    char buffer[CAPTURE_TRANS_BUFFER_SIZE];
     int remaining_buffer_size;
 
     volatile char *write_pos;
@@ -156,7 +158,7 @@ struct job_session
     pthread_t job_thread;
     JOB_THREAD_ARGS job_thread_args;
 
-    DATA_BUFFER *data_buffer_array[MAX_DATA_BUFFER_COUNT];
+    CAPTURE_TRANS_BUFFER *capture_trans_buffer[MAX_CAPTURE_TRANS_BUFFER_COUNT]; // job 쓰레드가 쓰고, main 쓰레드가 읽기 때문에 volatile 선언이 필요한지 확인
     volatile int write_idx;
     int read_idx;
 
@@ -177,10 +179,10 @@ struct control_session
     unsigned short port; /* htons, sin_port */
 };
 
-typedef struct json_format_result JSON_FORMAT_RESULT;
-struct json_format_result
+typedef struct json_type_result JSON_TYPE_RESULT;
+struct json_type_result
 {
-    char *result[MAX_JSON_FORMAT_RESULT_COUNT];
+    char *json[MAX_JSON_TYPE_RESULT_COUNT];
 
     int write_idx;
     int read_idx;
@@ -190,11 +192,15 @@ struct json_format_result
 
 int open_control_session (CONTROL_SESSION *control_session, CTC_CONN_TYPE conn_type);
 int close_control_session (CONTROL_SESSION *control_session);
+int close_job_session_socket_only (JOB_SESSION *job_session);
 int open_job_session (CONTROL_SESSION *control_session, JOB_SESSION *job_session);
 int close_job_session (CONTROL_SESSION *control_session, JOB_SESSION *job_session);
 int get_server_status (CONTROL_SESSION *control_session, int *server_status);
 int register_table_to_job (CONTROL_SESSION *control_session, JOB_SESSION *job_session, char *user_name, char *table_name);
 int unregister_table_from_job (CONTROL_SESSION *control_session, JOB_SESSION *job_session, char *user_name, char *table_name);
+int start_capture_for_job (CONTROL_SESSION *control_session, JOB_SESSION *job_session);
+int stop_capture_for_job (CONTROL_SESSION *control_session, JOB_SESSION *job_session, CTC_QUIT_JOB_CONDITION quit_job_condition);
+int read_capture_transaction_in_json (JOB_SESSION *job_session, JSON_TYPE_RESULT *json_type_result);
 int get_job_status (CONTROL_SESSION *control_session, JOB_SESSION *job_session, int *job_status);
 
 #endif

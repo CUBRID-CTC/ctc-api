@@ -182,9 +182,9 @@ int ctc_fetch_capture_transaction (int ctc_handle, int job_descriptor, char *res
         goto error;
     }
 
-    if (result_data_size == 0)
+    if (*result_data_size == 0)
     {
-        // need buffer size 입력
+        return CTC_SUCCESS_NO_DATA;
     }
 
     if (is_fragmented)
@@ -195,6 +195,10 @@ int ctc_fetch_capture_transaction (int ctc_handle, int job_descriptor, char *res
     {
         return CTC_SUCCESS;
     }
+
+error:
+
+    return CTC_FAILURE;
 }
 
 int ctc_check_job_status (int ctc_handle, int job_descriptor, int *job_status)
@@ -216,6 +220,7 @@ error:
     return CTC_FAILURE;
 }
 
+#if 0
 int ctc_set_job_attribute (int ctc_handle, int job_descriptor, int job_attr_id)
 {
     return CTC_SUCCESS;
@@ -225,4 +230,5 @@ int ctc_get_statistics (int ctc_handle, int job_descriptor, int stat_id, int *st
 {
     return CTC_SUCCESS;
 }
+#endif
 
