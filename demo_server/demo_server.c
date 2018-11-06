@@ -257,6 +257,11 @@ int process_control_session_request (SESSION_GROUP *session_group, bool *is_fini
     retval = read (session_group->ctrl_sockfd, &ctcp_header, sizeof (ctcp_header));
     if (retval == -1 || retval < sizeof (ctcp_header))
     {
+        if (retval == 0)
+        {
+            return 0;
+        }
+
         PRINT_ERR_LOG ();
         goto error;
     }
