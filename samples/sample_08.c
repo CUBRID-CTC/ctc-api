@@ -12,6 +12,7 @@ int main (void)
     int  data_size   = 0;
 
     ctc_handle = ctc_open_connection (0, "ctc:cubrid:192.168.1.77:20000");
+    //ctc_handle = ctc_open_connection (0, "ctc:cubrid:192.168.1.77:20050");
     if (ctc_handle == CTC_FAILURE)
     {
         printf ("[ERROR] ctc_open_connection ()\n");
