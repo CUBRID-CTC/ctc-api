@@ -5,54 +5,69 @@
 #include <unistd.h>
 #include "ctc_network.h"
 
-int make_ctcp_header (CTCP_OP_ID op_id, char op_param, CONTROL_SESSION *control_session, JOB_SESSION *job_session, int header_data, CTCP_HEADER *ctcp_header)
+int make_ctcp_header (CTCP_OP_ID op_id, char op_param, CONTROL_SESSION *control_session, JOB_SESSION *job_session, int header_data, CTCP *ctcp)
 {
-    memset (ctcp_header, 0, CTCP_PACKET_HEADER_SIZE);
+    memset (&ctcp->header, 0, CTCP_PACKET_HEADER_SIZE);
 
     /* Operation ID */
-    ctcp_header->op_id = op_id;
+    ctcp->header.op_id = op_id;
 
     /* Operation specific param */
-    ctcp_header->op_param_or_result_code = op_param;
+    ctcp->header.op_param_or_result_code = op_param;
 
     /* Job descriptor */
-    if (job_session != NULL && job_session->job_desc != -1)
+    if (job_session != NULL && job_session->job_desc != INITIAL_JOB_DESC)
     {
-        ctcp_header->job_desc = job_session->job_desc;
+        ctcp->header.job_desc = job_session->job_desc;
     }
 
     /* Session group ID */
-    if (control_session->session_gid != -1)
+    if (control_session->session_gid != INITIAL_SESSION_GID)
     {
-        ctcp_header->session_gid = control_session->session_gid;
+        ctcp->header.session_gid = control_session->session_gid;
     }
 
     /* Protocol version */
-    ctcp_header->version[0] = CTCP_MAJOR_VERSION;
-    ctcp_header->version[1] = CTCP_MINOR_VERSION;
-    ctcp_header->version[2] = CTCP_PATCH_VERSION;
-    ctcp_header->version[3] = CTCP_BUILD_VERSION;
+    ctcp->header.version[0] = CTCP_MAJOR_VERSION;
+    ctcp->header.version[1] = CTCP_MINOR_VERSION;
+    ctcp->header.version[2] = CTCP_PATCH_VERSION;
+    ctcp->header.version[3] = CTCP_BUILD_VERSION;
 
     /* etc - job or server status, data length, job attribute value */
-    ctcp_header->header_data = header_data;
+    ctcp->header.header_data = header_data;
 
     return CTC_SUCCESS;
 }
 
-int make_ctcp_data_payload (char *ctcp_data_payload, char *data, int data_size)
+int make_ctcp_data_payload (char *data, int data_size, CTCP *ctcp)
 {
     if (data_size > CTCP_MAX_DATA_PAYLOAD_SIZE)
     {
-        goto error;
+        return CTC_FAILED_OVERFLOW_DATA_PAYLOAD;
     }
 
-    memcpy (ctcp_data_payload, data, data_size);
+    memcpy (ctcp->data_payload, data, data_size);
 
     return CTC_SUCCESS;
+}
 
-error:
+int send_stream (int sockfd, char *data, int data_size)
+{
+    int write_size;
 
-    return CTC_FAILED;
+    while (data_size > 0)
+    {
+        write_size = write (sockfd, data, data_size);
+        if (write_size <= 0)
+        {
+            return CTC_FAILED;
+        }
+
+        data += write_size;
+        data_size -= write_size;
+    }
+
+    return CTC_SUCCESS;
 }
 
 int send_ctcp (CTCP_OP_ID op_id, char op_param, CONTROL_SESSION *control_session, JOB_SESSION *job_session, int header_data, char *data)
@@ -60,17 +75,20 @@ int send_ctcp (CTCP_OP_ID op_id, char op_param, CONTROL_SESSION *control_session
     CTCP ctcp;
 
     int data_payload_size = 0;
-    int data_size = 0;
+    int ctcp_size = 0;
     int retval;
 
-    if (IS_FAILED (make_ctcp_header (op_id, op_param, control_session, job_session, header_data, &ctcp.header)))
+    retval = make_ctcp_header (op_id, op_param, control_session, job_session, header_data, &ctcp);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
-    if (IS_NOT_NULL (data))
+    if (op_id == CTCP_REGISTER_TABLE ||
+        op_id == CTCP_UNREGISTER_TABLE)
     {
-        if (IS_FAILED (make_ctcp_data_payload (ctcp.data_payload, data, header_data)))
+        retval = make_ctcp_data_payload (data, header_data, &ctcp);
+        if (IS_FAILED (retval))
         {
             goto error;
         }
@@ -78,21 +96,21 @@ int send_ctcp (CTCP_OP_ID op_id, char op_param, CONTROL_SESSION *control_session
         data_payload_size = header_data;
     }
 
-    data_size = CTCP_PACKET_HEADER_SIZE + data_payload_size;
+    ctcp_size = CTCP_PACKET_HEADER_SIZE + data_payload_size;
 
     if (op_id != CTCP_CREATE_JOB_SESSION)
     {
-        retval = write (control_session->sockfd, &ctcp, data_size);
-        if (retval == -1 || retval < data_size)
+        if (IS_FAILED (send_stream (control_session->sockfd, (char *)&ctcp, ctcp_size)))
         {
+            retval = CTC_FAILED_COMMUNICATE_CONTROL_SESSION;
             goto error;
         }
     }
     else
     {
-        retval = write (job_session->sockfd, &ctcp.header, data_size);
-        if (retval == -1 || retval < data_size)
+        if (IS_FAILED (send_stream (job_session->sockfd, (char *)&ctcp.header, ctcp_size)))
         {
+            retval = CTC_FAILED_COMMUNICATE_JOB_SESSION;
             goto error;
         }
     }
@@ -101,12 +119,17 @@ int send_ctcp (CTCP_OP_ID op_id, char op_param, CONTROL_SESSION *control_session
 
 error:
 
-    return CTC_FAILED;
+    return retval;
 }
 
 int check_operation_id (CTCP_HEADER *ctcp_header, CTCP_OP_ID op_id)
 {
-    return ctcp_header->op_id == op_id ? CTC_SUCCESS : CTC_FAILED;
+    if (ctcp_header->op_id != op_id)
+    {
+        return CTC_FAILED_RECEIVE_INVALID_OP_ID;
+    }
+
+    return CTC_SUCCESS;
 }
 
 int check_result_code (CTCP_HEADER *ctcp_header)
@@ -124,52 +147,40 @@ error:
     return CTC_FAILED;
 }
 
-int check_protocol_version (CTCP_HEADER *ctcp_header)
-{
-    if (ctcp_header->version[0] != CTCP_MAJOR_VERSION)
-    {
-        goto error;
-    }
-
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILED;
-}
-
 int check_job_desc (CTCP_HEADER *ctcp_header, JOB_SESSION *job_session)
 {
-    if (job_session != NULL && job_session->job_desc != -1)
+    if (job_session != NULL && job_session->job_desc != INITIAL_JOB_DESC)
     {
         if (ctcp_header->job_desc != job_session->job_desc)
         {
-            goto error;
+            return CTC_FAILED_RECEIVE_INVALID_JOB_DESC;
         }
     }
 
     return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILED;
 }
 
 int check_session_gid (CTCP_HEADER *ctcp_header, CONTROL_SESSION *control_session)
 {
-    if (control_session->session_gid != -1)
+    if (control_session->session_gid != INITIAL_SESSION_GID)
     {
         if (ctcp_header->session_gid != control_session->session_gid)
         {
-            goto error;
+            return CTC_FAILED_RECEIVE_INVALID_SESSION_GID;
         }
     }
 
     return CTC_SUCCESS;
+}
 
-error:
+int check_protocol_version (CTCP_HEADER *ctcp_header)
+{
+    if (ctcp_header->version[0] != CTCP_MAJOR_VERSION)
+    {
+        return CTC_FAILED_RECEIVE_NOT_SUPPORTED_PROTOCOL;
+    }
 
-    return CTC_FAILED;
+    return CTC_SUCCESS;
 }
 
 int set_session_gid (CONTROL_SESSION *control_session, int session_gid)
@@ -193,6 +204,11 @@ void set_job_desc (JOB_SESSION *job_session, unsigned short job_desc)
     job_session->job_desc = job_desc;
 }
 
+int recv_stream (int sockfd, char *data_buffer, int data_size)
+{
+
+}
+
 int recv_ctcp_header (CTCP_OP_ID op_id, CONTROL_SESSION *control_session, JOB_SESSION *job_session, CTCP_HEADER *ctcp_header)
 {
     int retval;
@@ -200,21 +216,26 @@ int recv_ctcp_header (CTCP_OP_ID op_id, CONTROL_SESSION *control_session, JOB_SE
     if (op_id == CTCP_CREATE_JOB_SESSION_RESULT ||
         op_id == CTCP_CAPTURED_DATA_RESULT)
     {
-        retval = read (job_session->sockfd, ctcp_header, CTCP_PACKET_HEADER_SIZE);
+        retval = recv_stream (job_session->sockfd, (char *)ctcp_header, CTCP_PACKET_HEADER_SIZE);
+        if (IS_FAILED (retval))
+        {
+            retval = CTC_FAILED_COMMUNICATE_JOB_SESSION;
+            goto error;
+        }
     }
     else
     {
-        retval = read (control_session->sockfd, ctcp_header, CTCP_PACKET_HEADER_SIZE);
-    }
-
-    // peer 에서 연결 끊은 경우 고려해야 한다. 에러로 처리 해야하는 경우와 아닌 경우 구분
-    if (retval == -1 || retval < CTCP_PACKET_HEADER_SIZE)
-    {
-        goto error;
+        retval = recv_stream (control_session->sockfd, (char *)ctcp_header, CTCP_PACKET_HEADER_SIZE);
+        if (IS_FAILED (retval))
+        {
+            retval = CTC_FAILED_COMMUNICATE_CONTROL_SESSION;
+            goto error;
+        }
     }
 
     /* Operation ID */
-    if (IS_FAILED (check_operation_id (ctcp_header, op_id)))
+    retval = check_operation_id (ctcp_header, op_id);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
@@ -226,19 +247,22 @@ int recv_ctcp_header (CTCP_OP_ID op_id, CONTROL_SESSION *control_session, JOB_SE
     }
 
     /* Job descriptor */
-    if (IS_FAILED (check_job_desc (ctcp_header, job_session)))
+    retval = check_job_desc (ctcp_header, job_session);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
     /* Session group ID */
-    if (IS_FAILED (check_session_gid (ctcp_header, control_session)))
+    retval = check_session_gid (ctcp_header, control_session);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
     /* Protocol version */
-    if (IS_FAILED (check_protocol_version (ctcp_header)))
+    retval = check_protocol_version (ctcp_header);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
@@ -247,70 +271,45 @@ int recv_ctcp_header (CTCP_OP_ID op_id, CONTROL_SESSION *control_session, JOB_SE
 
 error:
 
-    return CTC_FAILED;
+    return retval;
 }
 
 int recv_ctcp (CTCP_OP_ID op_id, CONTROL_SESSION *control_session, JOB_SESSION *job_session, int *header_data)
 {
-    CTCP_HEADER ctcp_header;
+    CTCP ctcp;
+    int retval;
 
-    if (IS_FAILED (recv_ctcp_header (op_id, control_session, job_session, &ctcp_header)))
+    retval = recv_ctcp_header (op_id, control_session, job_session, &ctcp.header);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
-    switch (ctcp_header.op_id)
+    switch (ctcp.header.op_id)
     {
         case CTCP_CREATE_CONTROL_SESSION_RESULT:
-            set_session_gid (control_session, ctcp_header.session_gid);
-
-            break;
-        case CTCP_DESTROY_CONTROL_SESSION_RESULT:
-            /* nothing to do */
+            set_session_gid (control_session, ctcp.header.session_gid);
 
             break;
         case CTCP_CREATE_JOB_SESSION_RESULT:
-            set_job_desc (job_session, ctcp_header.job_desc);
-
-            break;
-        case CTCP_DESTROY_JOB_SESSION_RESULT:
-            /* nothing to do */
+            set_job_desc (job_session, ctcp.header.job_desc);
 
             break;
         case CTCP_REQUEST_JOB_STATUS_RESULT:
-            *header_data = ctcp_header.header_data;
+            *header_data = ctcp.header.header_data;
 
             break;
         case CTCP_REQUEST_SERVER_STATUS_RESULT:
-            *header_data = ctcp_header.header_data;
-
-            break;
-        case CTCP_REGISTER_TABLE_RESULT:
-            /* nothing to do */
-
-            break;
-        case CTCP_UNREGISTER_TABLE_RESULT:
-            /* nothing to do */
-
-            break;
-        case CTCP_SET_JOB_ATTRIBUTE_RESULT:
-            /* nothing to do */
-
-            break;
-        case CTCP_START_CAPTURE_RESULT:
-            /* nothing to do */
-            break;
-
-        case CTCP_STOP_CAPTURE_RESULT:
-            /* nothing to do */
+            *header_data = ctcp.header.header_data;
 
             break;
         case CTCP_CAPTURED_DATA_RESULT:
-            *header_data = ctcp_header.header_data;
-            job_session->result_code = ctcp_header.op_param_or_result_code; // error 처리할 때 코드가 바뀔 것
+            *header_data = ctcp.header.header_data;
+            job_session->result_code = ctcp.header.op_param_or_result_code; // error 처리할 때 코드가 바뀔 것
 
             break;
         default:
+            // assert
             goto error;
     }
 
@@ -318,7 +317,7 @@ int recv_ctcp (CTCP_OP_ID op_id, CONTROL_SESSION *control_session, JOB_SESSION *
 
 error:
 
-    return CTC_FAILED;
+    return retval;
 }
 
 int recv_ctcp_data_payload (JOB_SESSION *job_session, char *buffer, int data_size)
@@ -343,12 +342,14 @@ error:
 int open_control_session (CONTROL_SESSION *control_session, CTC_CONN_TYPE conn_type)
 {
     struct sockaddr_in server_addr;
+    int retval;
 
     int state = 0;
 
     control_session->sockfd = socket (PF_INET, SOCK_STREAM, 0);
     if (control_session->sockfd == -1)
     {
+        retval = CTC_FAILED_OPEN_CONTROL_SESSION;
         goto error;
     }
 
@@ -361,15 +362,18 @@ int open_control_session (CONTROL_SESSION *control_session, CTC_CONN_TYPE conn_t
 
     if (IS_FAILED (connect (control_session->sockfd, (struct sockaddr *)&server_addr, sizeof (server_addr))))
     {
+        retval = CTC_FAILED_OPEN_CONTROL_SESSION;
         goto error;
     }
 
-    if (IS_FAILED (send_ctcp (CTCP_CREATE_CONTROL_SESSION, conn_type, control_session, NULL, 0, NULL)))
+    retval = send_ctcp (CTCP_CREATE_CONTROL_SESSION, conn_type, control_session, NULL, 0, NULL);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
-    if (IS_FAILED (recv_ctcp (CTCP_CREATE_CONTROL_SESSION_RESULT, control_session, NULL, NULL)))
+    retval = recv_ctcp (CTCP_CREATE_CONTROL_SESSION_RESULT, control_session, NULL, NULL);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
@@ -383,23 +387,28 @@ error:
         close (control_session->sockfd);
     }
 
-    return CTC_FAILED_OPEN_CONTROL_SESSION;
+    return retval;
 }
 
 int close_control_session (CONTROL_SESSION *control_session)
 {
-    if (IS_FAILED (send_ctcp (CTCP_DESTROY_CONTROL_SESSION, 0, control_session, NULL, 0, NULL)))
+    int retval;
+
+    retval = send_ctcp (CTCP_DESTROY_CONTROL_SESSION, 0, control_session, NULL, 0, NULL);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
-    if (IS_FAILED (recv_ctcp (CTCP_DESTROY_CONTROL_SESSION_RESULT, control_session, NULL, NULL)))
+    retval = recv_ctcp (CTCP_DESTROY_CONTROL_SESSION_RESULT, control_session, NULL, NULL);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
     if (IS_FAILED (close (control_session->sockfd)))
     {
+        retval = CTC_FAILED_CLOSE_CONTROL_SESSION;
         goto error;
     }
 
@@ -409,18 +418,20 @@ error:
 
     close (control_session->sockfd);
 
-    return CTC_FAILED_CLOSE_CONTROL_SESSION;
+    return retval;
 }
 
 int open_job_session (CONTROL_SESSION *control_session, JOB_SESSION *job_session)
 {
     struct sockaddr_in server_addr;
+    int retval;
 
     int state = 0;
 
     job_session->sockfd = socket(PF_INET, SOCK_STREAM, 0);
     if (job_session->sockfd == -1)
     {
+        retval = CTC_FAILED_OPEN_JOB_SESSION;
         goto error;
     }
 
@@ -433,15 +444,18 @@ int open_job_session (CONTROL_SESSION *control_session, JOB_SESSION *job_session
 
     if (IS_FAILED (connect (job_session->sockfd, (struct sockaddr *)&server_addr, sizeof (server_addr))))
     {
+        retval = CTC_FAILED_OPEN_JOB_SESSION;
         goto error;
     }
 
-    if (IS_FAILED (send_ctcp (CTCP_CREATE_JOB_SESSION, 0, control_session, job_session, 0, NULL)))
+    retval = send_ctcp (CTCP_CREATE_JOB_SESSION, 0, control_session, job_session, 0, NULL);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
-    if (IS_FAILED (recv_ctcp (CTCP_CREATE_JOB_SESSION_RESULT, control_session, job_session, NULL)))
+    retval = recv_ctcp (CTCP_CREATE_JOB_SESSION_RESULT, control_session, job_session, NULL);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
@@ -455,23 +469,28 @@ error:
         close (job_session->sockfd);
     }
 
-    return CTC_FAILED_OPEN_JOB_SESSION;
+    return retval;
 }
 
 int close_job_session (CONTROL_SESSION *control_session, JOB_SESSION *job_session)
 {
-    if (IS_FAILED (send_ctcp (CTCP_DESTROY_JOB_SESSION, 0, control_session, job_session, 0, NULL)))
+    int retval;
+
+    retval = send_ctcp (CTCP_DESTROY_JOB_SESSION, 0, control_session, job_session, 0, NULL);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
-    if (IS_FAILED (recv_ctcp (CTCP_DESTROY_JOB_SESSION_RESULT, control_session, job_session, NULL)))
+    retval = recv_ctcp (CTCP_DESTROY_JOB_SESSION_RESULT, control_session, job_session, NULL);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
     if (IS_FAILED (close (job_session->sockfd)))
     {
+        retval = CTC_FAILED_CLOSE_JOB_SESSION;
         goto error;
     }
 
@@ -481,7 +500,7 @@ error:
 
     close (job_session->sockfd);
 
-    return CTC_FAILED_CLOSE_JOB_SESSION;
+    return retval;
 }
 
 int close_job_session_socket_only (JOB_SESSION *job_session)
@@ -518,12 +537,14 @@ int request_server_status (CONTROL_SESSION *control_session, int *server_status)
 {
     int retval;
 
-    if (IS_FAILED (send_ctcp (CTCP_REQUEST_SERVER_STATUS, 0, control_session, NULL, 0, NULL)))
+    retval = send_ctcp (CTCP_REQUEST_SERVER_STATUS, 0, control_session, NULL, 0, NULL);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
-    if (IS_FAILED (recv_ctcp (CTCP_REQUEST_SERVER_STATUS_RESULT, control_session, NULL, server_status)))
+    retval = recv_ctcp (CTCP_REQUEST_SERVER_STATUS_RESULT, control_session, NULL, server_status);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
@@ -588,12 +609,14 @@ int request_register_table (CONTROL_SESSION *control_session, JOB_SESSION *job_s
         goto error;
     }
 
-    if (IS_FAILED (send_ctcp (CTCP_REGISTER_TABLE, 0, control_session, job_session, data_payload_len, data_payload)))
+    retval = send_ctcp (CTCP_REGISTER_TABLE, 0, control_session, job_session, data_payload_len, data_payload);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
-    if (IS_FAILED (recv_ctcp (CTCP_REGISTER_TABLE_RESULT, control_session, job_session, NULL)))
+    retval = recv_ctcp (CTCP_REGISTER_TABLE_RESULT, control_session, job_session, NULL);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
@@ -617,12 +640,14 @@ int request_unregister_table (CONTROL_SESSION *control_session, JOB_SESSION *job
         goto error;
     }
 
-    if (IS_FAILED (send_ctcp (CTCP_UNREGISTER_TABLE, 0, control_session, job_session, data_payload_len, data_payload)))
+    retval = send_ctcp (CTCP_UNREGISTER_TABLE, 0, control_session, job_session, data_payload_len, data_payload);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
-    if (IS_FAILED (recv_ctcp (CTCP_UNREGISTER_TABLE_RESULT, control_session, job_session, NULL)))
+    retval = recv_ctcp (CTCP_UNREGISTER_TABLE_RESULT, control_session, job_session, NULL);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
@@ -877,12 +902,14 @@ int request_start_capture (CONTROL_SESSION *control_session, JOB_SESSION *job_se
         goto error;
     }
 
-    if (IS_FAILED (send_ctcp (CTCP_START_CAPTURE, 0, control_session, job_session, 0, NULL)))
+    retval = send_ctcp (CTCP_START_CAPTURE, 0, control_session, job_session, 0, NULL);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
-    if (IS_FAILED (recv_ctcp (CTCP_START_CAPTURE_RESULT, control_session, job_session, NULL)))
+    retval = recv_ctcp (CTCP_START_CAPTURE_RESULT, control_session, job_session, NULL);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
@@ -903,12 +930,14 @@ int request_stop_capture (CONTROL_SESSION *control_session, JOB_SESSION *job_ses
 {
     int retval;
 
-    if (IS_FAILED (send_ctcp (CTCP_STOP_CAPTURE, job_close_condition, control_session, job_session, 0, NULL)))
+    retval = send_ctcp (CTCP_STOP_CAPTURE, job_close_condition, control_session, job_session, 0, NULL);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
-    if (IS_FAILED (recv_ctcp (CTCP_STOP_CAPTURE_RESULT, control_session, job_session, NULL)))
+    retval = recv_ctcp (CTCP_STOP_CAPTURE_RESULT, control_session, job_session, NULL);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
@@ -1460,12 +1489,14 @@ int request_job_status (CONTROL_SESSION *control_session, JOB_SESSION *job_sessi
 {
     int retval;
 
-    if (IS_FAILED (send_ctcp (CTCP_REQUEST_JOB_STATUS, 0, control_session, job_session, 0, NULL)))
+    retval = send_ctcp (CTCP_REQUEST_JOB_STATUS, 0, control_session, job_session, 0, NULL);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
-    if (IS_FAILED (recv_ctcp (CTCP_REQUEST_JOB_STATUS_RESULT, control_session, job_session, job_status)))
+    retval = recv_ctcp (CTCP_REQUEST_JOB_STATUS_RESULT, control_session, job_session, job_status);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
