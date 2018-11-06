@@ -1,23 +1,27 @@
 #include "ctc_core.h"
 
-int ctc_open_connection (int connection_type, char *connection_string)
+int ctc_open_connection (CTC_CONN_TYPE connection_type, char *connection_string)
 {
     int ctc_handle;
+    int retval;
 
     pthread_once (&ctc_api_once_init, ctc_api_init);
 
     if (connection_type != CTC_CONN_TYPE_DEFAULT &&
         connection_type != CTC_CONN_TYPE_CTRL_ONLY)
     {
+        retval = CTC_FAILED_INVALID_ARGS;
         goto error;
     }
 
     if (IS_NULL (connection_string))
     {
+        retval = CTC_FAILED_INVALID_ARGS;
         goto error;
     }
 
-    if (IS_FAILURE (connect_server (connection_type, connection_string, &ctc_handle)))
+    retval = open_connection (connection_type, connection_string, &ctc_handle);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
@@ -26,147 +30,79 @@ int ctc_open_connection (int connection_type, char *connection_string)
 
 error:
 
-    return CTC_FAILURE;
+    return retval;
 }
 
 int ctc_close_connection (int ctc_handle)
 {
-    if (IS_FAILURE (disconnect_server (ctc_handle)))
-    {
-        goto error;
-    }
-
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILURE;
+    return close_connection (ctc_handle);
 }
 
 int ctc_add_job (int ctc_handle)
 {
-    if (IS_FAILURE (add_job (ctc_handle)))
+    int job_desc;
+    int retval;
+
+    retval = add_job (ctc_handle, &job_desc);
+    if (IS_FAILED (retval))
     {
-        goto error;
+        return retval;
     }
 
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILURE;
+    return job_desc;
 }
 
 int ctc_delete_job (int ctc_handle, int job_descriptor)
 {
-    if (IS_FAILURE (delete_job (ctc_handle, job_descriptor)))
-    {
-        goto error;
-    }
-
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILURE;
+    return delete_job (ctc_handle, job_descriptor);
 }
 
 int ctc_check_server_status (int ctc_handle, int *server_status)
 {
     if (IS_NULL (server_status))
     {
-        goto error;
+        return CTC_FAILED_INVALID_ARGS;
     }
 
-    if (IS_FAILURE (check_server_status (ctc_handle, server_status)))
-    {
-        goto error;
-    }
-
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILURE;
+    return check_server_status (ctc_handle, server_status);
 }
 
 int ctc_register_table (int ctc_handle, int job_descriptor, char *db_user_name, char *table_name)
 {
     if (IS_NULL (db_user_name) || IS_NULL (table_name))
     {
-        goto error;
+        return CTC_FAILED_INVALID_ARGS;
     }
 
-    if (IS_FAILURE (register_table (ctc_handle, job_descriptor, db_user_name, table_name)))
-    {
-        goto error;
-    }
-
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILURE;
+    return register_table (ctc_handle, job_descriptor, db_user_name, table_name);
 }
 
 int ctc_unregister_table (int ctc_handle, int job_descriptor, char *db_user_name, char *table_name)
 {
     if (IS_NULL (db_user_name) || IS_NULL (table_name))
     {
-        goto error;
+        return CTC_FAILED_INVALID_ARGS;
     }
 
-    if (IS_FAILURE (unregister_table (ctc_handle, job_descriptor, db_user_name, table_name)))
-    {
-        goto error;
-    }
-
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILURE;
+    return unregister_table (ctc_handle, job_descriptor, db_user_name, table_name);
 }
 
 int ctc_start_capture (int ctc_handle, int job_descriptor)
 {
-    if (IS_FAILURE (start_capture (ctc_handle, job_descriptor)))
-    {
-        goto error;
-    }
-
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILURE;
+    return start_capture (ctc_handle, job_descriptor);
 }
 
-int ctc_stop_capture (int ctc_handle, int job_descriptor, int close_condition)
+int ctc_stop_capture (int ctc_handle, int job_descriptor, CTC_JOB_CLOSE_CONDITION close_condition)
 {
-    if (close_condition != CTC_QUIT_JOB_IMMEDIATELY &&
-        close_condition != CTC_QUIT_JOB_AFTER_TRANSACTION)
+    if (close_condition != CTC_JOB_CLOSE_IMMEDIATELY &&
+        close_condition != CTC_JOB_CLOSE_AFTER_TRANSACTION)
     {
-        goto error;
+        return CTC_FAILED_INVALID_ARGS;
     }
 
-    if (IS_FAILURE (stop_capture (ctc_handle, job_descriptor, close_condition)))
-    {
-        goto error;
-    }
-
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILURE;
+    return stop_capture (ctc_handle, job_descriptor, close_condition);
 }
 
-// required_buffer_size --> result_data_size 로 변경
-// return success 를 3개로 분류
-// success --> transaction 완성
-// success fragmented --> 더 읽어야 완성
-// success but no data --> 읽을 데이터가 없다.
 int ctc_fetch_capture_transaction (int ctc_handle, int job_descriptor, char *result_buffer, int result_buffer_size, int *result_data_size)
 {
     bool is_fragmented;
@@ -177,7 +113,7 @@ int ctc_fetch_capture_transaction (int ctc_handle, int job_descriptor, char *res
         goto error;
     }
 
-    if (IS_FAILURE (read_capture_transaction (ctc_handle, job_descriptor, result_buffer, result_buffer_size, result_data_size, &is_fragmented)))
+    if (IS_FAILED (read_capture_transaction (ctc_handle, job_descriptor, result_buffer, result_buffer_size, result_data_size, &is_fragmented)))
     {
         goto error;
     }
@@ -198,26 +134,17 @@ int ctc_fetch_capture_transaction (int ctc_handle, int job_descriptor, char *res
 
 error:
 
-    return CTC_FAILURE;
+    return CTC_FAILED;
 }
 
 int ctc_check_job_status (int ctc_handle, int job_descriptor, int *job_status)
 {
     if (IS_NULL (job_status))
     {
-        goto error;
+        return CTC_FAILED_INVALID_ARGS;
     }
 
-    if (IS_FAILURE (check_job_status (ctc_handle, job_descriptor, job_status)))
-    {
-        goto error;
-    }
-
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILURE;
+    return check_job_status (ctc_handle, job_descriptor, job_status);
 }
 
 #if 0

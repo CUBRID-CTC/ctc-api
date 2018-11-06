@@ -52,7 +52,7 @@ int make_ctcp_data_payload (char *ctcp_data_payload, char *data, int data_size)
 
 error:
 
-    return CTC_FAILURE;
+    return CTC_FAILED;
 }
 
 int send_ctcp (CTCP_OP_ID op_id, char op_param, CONTROL_SESSION *control_session, JOB_SESSION *job_session, int header_data, char *data)
@@ -63,14 +63,14 @@ int send_ctcp (CTCP_OP_ID op_id, char op_param, CONTROL_SESSION *control_session
     int data_size = 0;
     int retval;
 
-    if (IS_FAILURE (make_ctcp_header (op_id, op_param, control_session, job_session, header_data, &ctcp.header)))
+    if (IS_FAILED (make_ctcp_header (op_id, op_param, control_session, job_session, header_data, &ctcp.header)))
     {
         goto error;
     }
 
     if (IS_NOT_NULL (data))
     {
-        if (IS_FAILURE (make_ctcp_data_payload (ctcp.data_payload, data, header_data)))
+        if (IS_FAILED (make_ctcp_data_payload (ctcp.data_payload, data, header_data)))
         {
             goto error;
         }
@@ -101,12 +101,12 @@ int send_ctcp (CTCP_OP_ID op_id, char op_param, CONTROL_SESSION *control_session
 
 error:
 
-    return CTC_FAILURE;
+    return CTC_FAILED;
 }
 
 int check_operation_id (CTCP_HEADER *ctcp_header, CTCP_OP_ID op_id)
 {
-    return ctcp_header->op_id == op_id ? CTC_SUCCESS : CTC_FAILURE;
+    return ctcp_header->op_id == op_id ? CTC_SUCCESS : CTC_FAILED;
 }
 
 int check_result_code (CTCP_HEADER *ctcp_header)
@@ -121,7 +121,7 @@ int check_result_code (CTCP_HEADER *ctcp_header)
 
 error:
 
-    return CTC_FAILURE;
+    return CTC_FAILED;
 }
 
 int check_protocol_version (CTCP_HEADER *ctcp_header)
@@ -135,7 +135,7 @@ int check_protocol_version (CTCP_HEADER *ctcp_header)
 
 error:
 
-    return CTC_FAILURE;
+    return CTC_FAILED;
 }
 
 int check_job_desc (CTCP_HEADER *ctcp_header, JOB_SESSION *job_session)
@@ -152,7 +152,7 @@ int check_job_desc (CTCP_HEADER *ctcp_header, JOB_SESSION *job_session)
 
 error:
 
-    return CTC_FAILURE;
+    return CTC_FAILED;
 }
 
 int check_session_gid (CTCP_HEADER *ctcp_header, CONTROL_SESSION *control_session)
@@ -169,7 +169,7 @@ int check_session_gid (CTCP_HEADER *ctcp_header, CONTROL_SESSION *control_sessio
 
 error:
 
-    return CTC_FAILURE;
+    return CTC_FAILED;
 }
 
 int set_session_gid (CONTROL_SESSION *control_session, int session_gid)
@@ -185,7 +185,7 @@ int set_session_gid (CONTROL_SESSION *control_session, int session_gid)
 
 error:
 
-    return CTC_FAILURE;
+    return CTC_FAILED;
 }
 
 void set_job_desc (JOB_SESSION *job_session, unsigned short job_desc)
@@ -214,31 +214,31 @@ int recv_ctcp_header (CTCP_OP_ID op_id, CONTROL_SESSION *control_session, JOB_SE
     }
 
     /* Operation ID */
-    if (IS_FAILURE (check_operation_id (ctcp_header, op_id)))
+    if (IS_FAILED (check_operation_id (ctcp_header, op_id)))
     {
         goto error;
     }
 
     /* Result code */
-    if (IS_FAILURE (check_result_code (ctcp_header)))
+    if (IS_FAILED (check_result_code (ctcp_header)))
     {
         goto error;
     }
 
     /* Job descriptor */
-    if (IS_FAILURE (check_job_desc (ctcp_header, job_session)))
+    if (IS_FAILED (check_job_desc (ctcp_header, job_session)))
     {
         goto error;
     }
 
     /* Session group ID */
-    if (IS_FAILURE (check_session_gid (ctcp_header, control_session)))
+    if (IS_FAILED (check_session_gid (ctcp_header, control_session)))
     {
         goto error;
     }
 
     /* Protocol version */
-    if (IS_FAILURE (check_protocol_version (ctcp_header)))
+    if (IS_FAILED (check_protocol_version (ctcp_header)))
     {
         goto error;
     }
@@ -247,14 +247,14 @@ int recv_ctcp_header (CTCP_OP_ID op_id, CONTROL_SESSION *control_session, JOB_SE
 
 error:
 
-    return CTC_FAILURE;
+    return CTC_FAILED;
 }
 
 int recv_ctcp (CTCP_OP_ID op_id, CONTROL_SESSION *control_session, JOB_SESSION *job_session, int *header_data)
 {
     CTCP_HEADER ctcp_header;
 
-    if (IS_FAILURE (recv_ctcp_header (op_id, control_session, job_session, &ctcp_header)))
+    if (IS_FAILED (recv_ctcp_header (op_id, control_session, job_session, &ctcp_header)))
     {
         goto error;
     }
@@ -318,7 +318,7 @@ int recv_ctcp (CTCP_OP_ID op_id, CONTROL_SESSION *control_session, JOB_SESSION *
 
 error:
 
-    return CTC_FAILURE;
+    return CTC_FAILED;
 }
 
 int recv_ctcp_data_payload (JOB_SESSION *job_session, char *buffer, int data_size)
@@ -337,82 +337,86 @@ int recv_ctcp_data_payload (JOB_SESSION *job_session, char *buffer, int data_siz
 
 error:
 
-    return CTC_FAILURE;
-}
-
-void set_conn_type (CONTROL_SESSION *control_session, CTC_CONN_TYPE conn_type)
-{
-    control_session->conn_type = conn_type;
+    return CTC_FAILED;
 }
 
 int open_control_session (CONTROL_SESSION *control_session, CTC_CONN_TYPE conn_type)
 {
     struct sockaddr_in server_addr;
 
-    control_session->sockfd = socket(PF_INET, SOCK_STREAM, 0);
+    int state = 0;
+
+    control_session->sockfd = socket (PF_INET, SOCK_STREAM, 0);
     if (control_session->sockfd == -1)
     {
         goto error;
     }
+
+    state = 1;
 
     memset (&server_addr, 0, sizeof (server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = inet_addr (control_session->ip);
     server_addr.sin_port = htons (control_session->port);
 
-    if (IS_FAILURE (connect (control_session->sockfd, (struct sockaddr *)&server_addr, sizeof (server_addr))))
+    if (IS_FAILED (connect (control_session->sockfd, (struct sockaddr *)&server_addr, sizeof (server_addr))))
     {
         goto error;
     }
 
-    if (IS_FAILURE (send_ctcp (CTCP_CREATE_CONTROL_SESSION, conn_type, control_session, NULL, 0, NULL)))
+    if (IS_FAILED (send_ctcp (CTCP_CREATE_CONTROL_SESSION, conn_type, control_session, NULL, 0, NULL)))
     {
         goto error;
     }
 
-    if (IS_FAILURE (recv_ctcp (CTCP_CREATE_CONTROL_SESSION_RESULT, control_session, NULL, NULL)))
+    if (IS_FAILED (recv_ctcp (CTCP_CREATE_CONTROL_SESSION_RESULT, control_session, NULL, NULL)))
     {
         goto error;
     }
-
-    set_conn_type (control_session, conn_type);
 
     return CTC_SUCCESS;
 
 error:
 
-    return CTC_FAILURE;
+    if (state)
+    {
+        close (control_session->sockfd);
+    }
+
+    return CTC_FAILED_OPEN_CONTROL_SESSION;
 }
 
 int close_control_session (CONTROL_SESSION *control_session)
 {
-    if (IS_FAILURE (send_ctcp (CTCP_DESTROY_CONTROL_SESSION, 0, control_session, NULL, 0, NULL)))
+    if (IS_FAILED (send_ctcp (CTCP_DESTROY_CONTROL_SESSION, 0, control_session, NULL, 0, NULL)))
     {
         goto error;
     }
 
-    if (IS_FAILURE (recv_ctcp (CTCP_DESTROY_CONTROL_SESSION_RESULT, control_session, NULL, NULL)))
+    if (IS_FAILED (recv_ctcp (CTCP_DESTROY_CONTROL_SESSION_RESULT, control_session, NULL, NULL)))
     {
         goto error;
     }
 
-    if (IS_FAILURE (close (control_session->sockfd)))
+    if (IS_FAILED (close (control_session->sockfd)))
     {
         goto error;
     }
-
-    control_session->sockfd = -1;
 
     return CTC_SUCCESS;
 
 error:
 
-    return CTC_FAILURE;
+    close (control_session->sockfd);
+
+    return CTC_FAILED_CLOSE_CONTROL_SESSION;
 }
 
 int open_job_session (CONTROL_SESSION *control_session, JOB_SESSION *job_session)
 {
     struct sockaddr_in server_addr;
+
+    int state = 0;
 
     job_session->sockfd = socket(PF_INET, SOCK_STREAM, 0);
     if (job_session->sockfd == -1)
@@ -420,22 +424,24 @@ int open_job_session (CONTROL_SESSION *control_session, JOB_SESSION *job_session
         goto error;
     }
 
+    state = 1;
+
     memset (&server_addr, 0, sizeof (server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = inet_addr (control_session->ip);
     server_addr.sin_port = htons (control_session->port);
 
-    if (IS_FAILURE (connect (job_session->sockfd, (struct sockaddr *)&server_addr, sizeof (server_addr))))
+    if (IS_FAILED (connect (job_session->sockfd, (struct sockaddr *)&server_addr, sizeof (server_addr))))
     {
         goto error;
     }
 
-    if (IS_FAILURE (send_ctcp (CTCP_CREATE_JOB_SESSION, 0, control_session, job_session, 0, NULL)))
+    if (IS_FAILED (send_ctcp (CTCP_CREATE_JOB_SESSION, 0, control_session, job_session, 0, NULL)))
     {
         goto error;
     }
 
-    if (IS_FAILURE (recv_ctcp (CTCP_CREATE_JOB_SESSION_RESULT, control_session, job_session, NULL)))
+    if (IS_FAILED (recv_ctcp (CTCP_CREATE_JOB_SESSION_RESULT, control_session, job_session, NULL)))
     {
         goto error;
     }
@@ -444,38 +450,43 @@ int open_job_session (CONTROL_SESSION *control_session, JOB_SESSION *job_session
 
 error:
 
-    return CTC_FAILURE;
+    if (state)
+    {
+        close (job_session->sockfd);
+    }
+
+    return CTC_FAILED_OPEN_JOB_SESSION;
 }
 
 int close_job_session (CONTROL_SESSION *control_session, JOB_SESSION *job_session)
 {
-    if (IS_FAILURE (send_ctcp (CTCP_DESTROY_JOB_SESSION, 0, control_session, job_session, 0, NULL)))
+    if (IS_FAILED (send_ctcp (CTCP_DESTROY_JOB_SESSION, 0, control_session, job_session, 0, NULL)))
     {
         goto error;
     }
 
-    if (IS_FAILURE (recv_ctcp (CTCP_DESTROY_JOB_SESSION_RESULT, control_session, job_session, NULL)))
+    if (IS_FAILED (recv_ctcp (CTCP_DESTROY_JOB_SESSION_RESULT, control_session, job_session, NULL)))
     {
         goto error;
     }
 
-    if (IS_FAILURE (close (job_session->sockfd)))
+    if (IS_FAILED (close (job_session->sockfd)))
     {
         goto error;
     }
-
-    job_session->sockfd = -1;
 
     return CTC_SUCCESS;
 
 error:
 
-    return CTC_FAILURE;
+    close (job_session->sockfd);
+
+    return CTC_FAILED_CLOSE_JOB_SESSION;
 }
 
 int close_job_session_socket_only (JOB_SESSION *job_session)
 {
-    if (IS_FAILURE (close (job_session->sockfd)))
+    if (IS_FAILED (close (job_session->sockfd)))
     {
         goto error;
     }
@@ -486,41 +497,39 @@ int close_job_session_socket_only (JOB_SESSION *job_session)
 
 error:
 
-    return CTC_FAILURE;
+    return CTC_FAILED;
 }
 
 int check_received_server_status (int server_status)
 {
-    switch (server_status)
+    if (server_status == CTC_SERVER_NOT_READY ||
+        server_status == CTC_SERVER_RUNNING ||
+        server_status == CTC_SERVER_CLOSING)
     {
-        case CTC_SERVER_NOT_READY:
-        case CTC_SERVER_RUNNING:
-        case CTC_SERVER_CLOSING:
-            break;
-        default:
-            goto error;
+        return CTC_SUCCESS;
     }
-
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILURE;
+    else
+    {
+        return CTC_FAILED_RECEIVE_INVALID_STATUS;
+    }
 }
 
-int get_server_status (CONTROL_SESSION *control_session, int *server_status)
+int request_server_status (CONTROL_SESSION *control_session, int *server_status)
 {
-    if (IS_FAILURE (send_ctcp (CTCP_REQUEST_SERVER_STATUS, 0, control_session, NULL, 0, NULL)))
+    int retval;
+
+    if (IS_FAILED (send_ctcp (CTCP_REQUEST_SERVER_STATUS, 0, control_session, NULL, 0, NULL)))
     {
         goto error;
     }
 
-    if (IS_FAILURE (recv_ctcp (CTCP_REQUEST_SERVER_STATUS_RESULT, control_session, NULL, server_status)))
+    if (IS_FAILED (recv_ctcp (CTCP_REQUEST_SERVER_STATUS_RESULT, control_session, NULL, server_status)))
     {
         goto error;
     }
 
-    if (IS_FAILURE (check_received_server_status (*server_status)))
+    retval = check_received_server_status (*server_status);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
@@ -529,10 +538,10 @@ int get_server_status (CONTROL_SESSION *control_session, int *server_status)
 
 error:
 
-    return CTC_FAILURE;
+    return retval;
 }
 
-int make_send_data (char *user_name, char *table_name, char *buffer, int buffer_size, int *data_len)
+int make_data_payload (char *user_name, char *table_name, char *buffer, int buffer_size, int *data_len)
 {
     int data_size;
     int user_name_len;
@@ -546,7 +555,7 @@ int make_send_data (char *user_name, char *table_name, char *buffer, int buffer_
 
     if (data_size > buffer_size)
     {
-        goto error;
+        return CTC_FAILED_OVERFLOW_DATA_PAYLOAD;
     }
 
     write_pos = buffer;
@@ -565,28 +574,26 @@ int make_send_data (char *user_name, char *table_name, char *buffer, int buffer_
     *data_len = data_size;
 
     return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILURE;
 }
 
-int register_table_to_job (CONTROL_SESSION *control_session, JOB_SESSION *job_session, char *user_name, char *table_name)
+int request_register_table (CONTROL_SESSION *control_session, JOB_SESSION *job_session, char *user_name, char *table_name)
 {
-    char buffer[CTCP_MAX_DATA_PAYLOAD_SIZE];
-    int data_len = 0;
+    char data_payload[CTCP_MAX_DATA_PAYLOAD_SIZE];
+    int data_payload_len = 0;
+    int retval;
 
-    if (IS_FAILURE (make_send_data (user_name, table_name, buffer, CTCP_MAX_DATA_PAYLOAD_SIZE, &data_len)))
+    retval = make_data_payload (user_name, table_name, data_payload, CTCP_MAX_DATA_PAYLOAD_SIZE, &data_payload_len);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
-    if (IS_FAILURE (send_ctcp (CTCP_REGISTER_TABLE, 0, control_session, job_session, data_len, buffer)))
+    if (IS_FAILED (send_ctcp (CTCP_REGISTER_TABLE, 0, control_session, job_session, data_payload_len, data_payload)))
     {
         goto error;
     }
 
-    if (IS_FAILURE (recv_ctcp (CTCP_REGISTER_TABLE_RESULT, control_session, job_session, NULL)))
+    if (IS_FAILED (recv_ctcp (CTCP_REGISTER_TABLE_RESULT, control_session, job_session, NULL)))
     {
         goto error;
     }
@@ -595,25 +602,27 @@ int register_table_to_job (CONTROL_SESSION *control_session, JOB_SESSION *job_se
 
 error:
 
-    return CTC_FAILURE;
+    return retval;
 }
 
-int unregister_table_from_job (CONTROL_SESSION *control_session, JOB_SESSION *job_session, char *user_name, char *table_name)
+int request_unregister_table (CONTROL_SESSION *control_session, JOB_SESSION *job_session, char *user_name, char *table_name)
 {
-    char buffer[CTCP_MAX_DATA_PAYLOAD_SIZE];
-    int data_len = 0;
+    char data_payload[CTCP_MAX_DATA_PAYLOAD_SIZE];
+    int data_payload_len = 0;
+    int retval;
 
-    if (IS_FAILURE (make_send_data (user_name, table_name, buffer, CTCP_MAX_DATA_PAYLOAD_SIZE, &data_len)))
+    retval = make_data_payload (user_name, table_name, data_payload, CTCP_MAX_DATA_PAYLOAD_SIZE, &data_payload_len);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
-    if (IS_FAILURE (send_ctcp (CTCP_UNREGISTER_TABLE, 0, control_session, job_session, data_len, buffer)))
+    if (IS_FAILED (send_ctcp (CTCP_UNREGISTER_TABLE, 0, control_session, job_session, data_payload_len, data_payload)))
     {
         goto error;
     }
 
-    if (IS_FAILURE (recv_ctcp (CTCP_UNREGISTER_TABLE_RESULT, control_session, job_session, NULL)))
+    if (IS_FAILED (recv_ctcp (CTCP_UNREGISTER_TABLE_RESULT, control_session, job_session, NULL)))
     {
         goto error;
     }
@@ -622,7 +631,7 @@ int unregister_table_from_job (CONTROL_SESSION *control_session, JOB_SESSION *jo
 
 error:
 
-    return CTC_FAILURE;
+    return retval;
 }
 
 void init_capture_trans_buffer_array (JOB_SESSION *job_session)
@@ -729,7 +738,7 @@ int alloc_capture_trans_buffer (JOB_SESSION *job_session, int requested_buffer_s
 
 error:
 
-    return CTC_FAILURE;
+    return CTC_FAILED;
 }
 
 int fetch_capture_transaction_from_server (JOB_SESSION *job_session, char *buffer, int buffer_size, int data_size)
@@ -739,7 +748,7 @@ int fetch_capture_transaction_from_server (JOB_SESSION *job_session, char *buffe
     memcpy (buffer, &job_session->result_code, sizeof (job_session->result_code));
     buffer += sizeof (job_session->result_code);
 
-    if (IS_FAILURE (recv_ctcp_data_payload (job_session, buffer, data_size)))
+    if (IS_FAILED (recv_ctcp_data_payload (job_session, buffer, data_size)))
     {
         goto error;
     }
@@ -752,7 +761,7 @@ int fetch_capture_transaction_from_server (JOB_SESSION *job_session, char *buffe
 
 error:
 
-    return CTC_FAILURE;
+    return CTC_FAILED;
 }
 
 int fetch_capture_transaction (CONTROL_SESSION *control_session, JOB_SESSION *job_session)
@@ -766,7 +775,7 @@ int fetch_capture_transaction (CONTROL_SESSION *control_session, JOB_SESSION *jo
     {
         data_payload_size = 0;
 
-        if (IS_FAILURE (recv_ctcp (CTCP_CAPTURED_DATA_RESULT, control_session, job_session, &data_payload_size)))
+        if (IS_FAILED (recv_ctcp (CTCP_CAPTURED_DATA_RESULT, control_session, job_session, &data_payload_size)))
         {
             goto error;
         }
@@ -776,12 +785,12 @@ int fetch_capture_transaction (CONTROL_SESSION *control_session, JOB_SESSION *jo
             buffer = NULL;
             buffer_size = sizeof (job_session->result_code) + data_payload_size;
 
-            if (IS_FAILURE (alloc_capture_trans_buffer (job_session, buffer_size, &buffer)))
+            if (IS_FAILED (alloc_capture_trans_buffer (job_session, buffer_size, &buffer)))
             {
                 goto error;
             }
 
-            if (IS_FAILURE (fetch_capture_transaction_from_server (job_session, buffer, buffer_size, data_payload_size)))
+            if (IS_FAILED (fetch_capture_transaction_from_server (job_session, buffer, buffer_size, data_payload_size)))
             {
                 goto error;
             }
@@ -792,7 +801,7 @@ int fetch_capture_transaction (CONTROL_SESSION *control_session, JOB_SESSION *jo
 
 error:
 
-    return CTC_FAILURE;
+    return CTC_FAILED;
 }
 
 void *job_thread_main (void *arg)
@@ -807,7 +816,7 @@ void *job_thread_main (void *arg)
 
     init_capture_trans_buffer_array (job_session);
 
-    if (IS_FAILURE (fetch_capture_transaction (control_session, job_session)))
+    if (IS_FAILED (fetch_capture_transaction (control_session, job_session)))
     {
         goto error;
     }
@@ -826,26 +835,22 @@ error:
 
     job_session->job_thread_is_alive = false;
 
-    retval = CTC_FAILURE;
+    retval = CTC_FAILED;
 
     pthread_exit (NULL);
 }
 
 int create_job_thread (CONTROL_SESSION *control_session, JOB_SESSION *job_session)
 {
-    job_session->job_thread_args.control_session = control_session;
-    job_session->job_thread_args.job_session = job_session;
+    job_session->job_thread.thr_args.control_session = control_session;
+    job_session->job_thread.thr_args.job_session = job_session;
 
-    if (IS_FAILURE (pthread_create (&job_session->job_thread, NULL, job_thread_main, (void *)&job_session->job_thread_args)))
+    if (IS_FAILED (pthread_create (&job_session->job_thread.thr_id, NULL, job_thread_main, (void *)&job_session->job_thread.thr_args)))
     {
-        goto error;
+        return CTC_FAILED_CREATE_JOB_THREAD;
     }
 
     return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILURE;
 }
 
 int destroy_job_thread (JOB_SESSION *job_session)
@@ -854,8 +859,30 @@ int destroy_job_thread (JOB_SESSION *job_session)
 
     job_session->job_thread_is_alive = false;
 
-//    if (IS_FAILURE (pthread_join (job_session->job_thread, (void **)&exit_status)))
-    if (IS_FAILURE (pthread_join (job_session->job_thread, NULL)))
+    if (IS_FAILED (pthread_join (job_session->job_thread.thr_id, NULL)))
+    {
+        return CTC_FAILED_DESTROY_JOB_THREAD;
+    }
+
+    return CTC_SUCCESS;
+}
+
+int request_start_capture (CONTROL_SESSION *control_session, JOB_SESSION *job_session)
+{
+    int retval;
+
+    retval = create_job_thread (control_session, job_session);
+    if (IS_FAILED (retval))
+    {
+        goto error;
+    }
+
+    if (IS_FAILED (send_ctcp (CTCP_START_CAPTURE, 0, control_session, job_session, 0, NULL)))
+    {
+        goto error;
+    }
+
+    if (IS_FAILED (recv_ctcp (CTCP_START_CAPTURE_RESULT, control_session, job_session, NULL)))
     {
         goto error;
     }
@@ -864,58 +891,36 @@ int destroy_job_thread (JOB_SESSION *job_session)
 
 error:
 
-    return CTC_FAILURE;
+    return retval;
 }
 
-int start_capture_for_job (CONTROL_SESSION *control_session, JOB_SESSION *job_session)
+void set_job_close_condition (JOB_SESSION *job_session, CTC_JOB_CLOSE_CONDITION job_close_condition) 
 {
-    if (IS_FAILURE (create_job_thread (control_session, job_session)))
-    {
-        goto error;
-    }
-
-    if (IS_FAILURE (send_ctcp (CTCP_START_CAPTURE, 0, control_session, job_session, 0, NULL)))
-    {
-        goto error;
-    }
-
-    if (IS_FAILURE (recv_ctcp (CTCP_START_CAPTURE_RESULT, control_session, job_session, NULL)))
-    {
-        goto error;
-    }
-
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILURE;
+    job_session->job_close_condition = job_close_condition;
 }
 
-void set_quit_job_condition (JOB_SESSION *job_session, CTC_QUIT_JOB_CONDITION quit_job_condition) 
+int request_stop_capture (CONTROL_SESSION *control_session, JOB_SESSION *job_session, CTC_JOB_CLOSE_CONDITION job_close_condition)
 {
-    job_session->quit_job_condition = quit_job_condition;
-}
+    int retval;
 
-int stop_capture_for_job (CONTROL_SESSION *control_session, JOB_SESSION *job_session, CTC_QUIT_JOB_CONDITION quit_job_condition)
-{
-    if (IS_FAILURE (send_ctcp (CTCP_STOP_CAPTURE, quit_job_condition, control_session, job_session, 0, NULL)))
+    if (IS_FAILED (send_ctcp (CTCP_STOP_CAPTURE, job_close_condition, control_session, job_session, 0, NULL)))
     {
         goto error;
     }
 
-    if (IS_FAILURE (recv_ctcp (CTCP_STOP_CAPTURE_RESULT, control_session, job_session, NULL)))
+    if (IS_FAILED (recv_ctcp (CTCP_STOP_CAPTURE_RESULT, control_session, job_session, NULL)))
     {
         goto error;
     }
 
-    if (quit_job_condition == CTC_QUIT_JOB_IMMEDIATELY)
+    if (job_close_condition == CTC_JOB_CLOSE_IMMEDIATELY)
     {
-        if (IS_FAILURE (destroy_job_thread (job_session)))
+        if (IS_FAILED (destroy_job_thread (job_session)))
         {
             goto error;
         }
 
-        if (IS_FAILURE (cleanup_capture_trans_buffer (job_session)))
+        if (IS_FAILED (cleanup_capture_trans_buffer (job_session)))
         {
             goto error;
         }
@@ -926,13 +931,13 @@ int stop_capture_for_job (CONTROL_SESSION *control_session, JOB_SESSION *job_ses
         goto error;
     }
 
-    set_quit_job_condition (job_session, quit_job_condition);
+    set_job_close_condition (job_session, job_close_condition);
 
     return CTC_SUCCESS;
 
 error:
 
-    return CTC_FAILURE;
+    return retval;
 }
 
 int reinit_json_type_result (JSON_TYPE_RESULT *json_type_result)
@@ -1056,7 +1061,7 @@ int read_data_header (char **read_pos_p, JSON_TYPE_RESULT *json_type_result)
 
 error:
 
-    return CTC_FAILURE;
+    return CTC_FAILED;
 }
 
 int read_number_of_items (char **read_pos_p, int *number_of_items)
@@ -1079,7 +1084,7 @@ int read_number_of_items (char **read_pos_p, int *number_of_items)
 
 error:
 
-    return CTC_FAILURE;
+    return CTC_FAILED;
 }
 
 int read_and_write_transaction_id (char **read_pos_p, char **write_pos_p)
@@ -1145,7 +1150,7 @@ int read_and_write_user_name (char **read_pos_p, char **write_pos_p)
 
 error:
 
-    return CTC_FAILURE;
+    return CTC_FAILED;
 }
 
 int read_and_write_table_name (char **read_pos_p, char **write_pos_p)
@@ -1181,7 +1186,7 @@ int read_and_write_table_name (char **read_pos_p, char **write_pos_p)
 
 error:
 
-    return CTC_FAILURE;
+    return CTC_FAILED;
 }
 
 int read_and_write_stmt_type (char **read_pos_p, char **write_pos_p)
@@ -1226,7 +1231,7 @@ int read_and_write_stmt_type (char **read_pos_p, char **write_pos_p)
 
 error:
 
-    return CTC_FAILURE;
+    return CTC_FAILED;
 }
 
 int read_and_write_columns (char **read_pos_p, char **write_pos_p)
@@ -1313,7 +1318,7 @@ int read_and_write_columns (char **read_pos_p, char **write_pos_p)
 
 error:
 
-    return CTC_FAILURE;
+    return CTC_FAILED;
 }
 
 int register_to_json_type_result (JSON_TYPE_RESULT *json_type_result, char *json_buffer)
@@ -1332,7 +1337,7 @@ int register_to_json_type_result (JSON_TYPE_RESULT *json_type_result, char *json
 
 error:
 
-    return CTC_FAILURE;
+    return CTC_FAILED;
 }
 
 int convert_capture_transaction_to_json (JOB_SESSION *job_session, JSON_TYPE_RESULT *json_type_result)
@@ -1351,12 +1356,12 @@ int convert_capture_transaction_to_json (JOB_SESSION *job_session, JSON_TYPE_RES
         goto end;
     }
 
-    if (IS_FAILURE (read_data_header (&read_pos, json_type_result)))
+    if (IS_FAILED (read_data_header (&read_pos, json_type_result)))
     {
         goto error;
     }
 
-    if (IS_FAILURE (read_number_of_items (&read_pos, &number_of_items)))
+    if (IS_FAILED (read_number_of_items (&read_pos, &number_of_items)))
     {
         goto error;
     }
@@ -1371,36 +1376,36 @@ int convert_capture_transaction_to_json (JOB_SESSION *job_session, JSON_TYPE_RES
         write_pos = temp;
 
         /* Transaction ID */
-        if (IS_FAILURE (read_and_write_transaction_id (&read_pos, &write_pos)))
+        if (IS_FAILED (read_and_write_transaction_id (&read_pos, &write_pos)))
         {
             goto error;
         }
 
         /* User name */
-        if (IS_FAILURE (read_and_write_user_name (&read_pos, &write_pos)))
+        if (IS_FAILED (read_and_write_user_name (&read_pos, &write_pos)))
         {
             goto error;
         }
 
         /* Table name */
-        if (IS_FAILURE (read_and_write_table_name (&read_pos, &write_pos)))
+        if (IS_FAILED (read_and_write_table_name (&read_pos, &write_pos)))
         {
             goto error;
         }
 
         /* Statement type */
-        if (IS_FAILURE (read_and_write_stmt_type (&read_pos, &write_pos)))
+        if (IS_FAILED (read_and_write_stmt_type (&read_pos, &write_pos)))
         {
             goto error;
         }
 
         /* Columns */
-        if (IS_FAILURE (read_and_write_columns (&read_pos, &write_pos)))
+        if (IS_FAILED (read_and_write_columns (&read_pos, &write_pos)))
         {
             goto error;
         }
 
-        if (IS_FAILURE (register_to_json_type_result (json_type_result, temp)))
+        if (IS_FAILED (register_to_json_type_result (json_type_result, temp)))
         {
             goto error;
         }
@@ -1414,17 +1419,17 @@ end:
 
 error:
 
-    return CTC_FAILURE;
+    return CTC_FAILED;
 }
 
 int read_capture_transaction_in_json (JOB_SESSION *job_session, JSON_TYPE_RESULT *json_type_result)
 {
-    if (IS_FAILURE (reinit_json_type_result (json_type_result)))
+    if (IS_FAILED (reinit_json_type_result (json_type_result)))
     {
         goto error;
     }
 
-    if (IS_FAILURE (convert_capture_transaction_to_json (job_session, json_type_result)))
+    if (IS_FAILED (convert_capture_transaction_to_json (job_session, json_type_result)))
     {
         goto error;
     }
@@ -1433,43 +1438,40 @@ int read_capture_transaction_in_json (JOB_SESSION *job_session, JSON_TYPE_RESULT
 
 error:
 
-    return CTC_FAILURE;
+    return CTC_FAILED;
 }
 
 int check_received_job_status (int job_status)
 {
-    switch (job_status)
+    if (job_status == CTC_JOB_WAITING ||
+        job_status == CTC_JOB_PROCESSING ||
+        job_status == CTC_JOB_READY_TO_FETCH ||
+        job_status == CTC_JOB_CLOSING)
     {
-        case CTC_JOB_NONE:
-        case CTC_JOB_WAITING:
-        case CTC_JOB_PROCESSING:
-        case CTC_JOB_READY_TO_FETCH:
-        case CTC_JOB_CLOSING:
-            break;
-        default:
-            goto error;
+        return CTC_SUCCESS;
     }
-
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILURE;
+    else
+    {
+        return CTC_FAILED_RECEIVE_INVALID_STATUS;
+    }
 }
 
-int get_job_status (CONTROL_SESSION *control_session, JOB_SESSION *job_session, int *job_status)
+int request_job_status (CONTROL_SESSION *control_session, JOB_SESSION *job_session, int *job_status)
 {
-    if (IS_FAILURE (send_ctcp (CTCP_REQUEST_JOB_STATUS, 0, control_session, job_session, 0, NULL)))
+    int retval;
+
+    if (IS_FAILED (send_ctcp (CTCP_REQUEST_JOB_STATUS, 0, control_session, job_session, 0, NULL)))
     {
         goto error;
     }
 
-    if (IS_FAILURE (recv_ctcp (CTCP_REQUEST_JOB_STATUS_RESULT, control_session, job_session, job_status)))
+    if (IS_FAILED (recv_ctcp (CTCP_REQUEST_JOB_STATUS_RESULT, control_session, job_session, job_status)))
     {
         goto error;
     }
 
-    if (IS_FAILURE (check_received_job_status (*job_status)))
+    retval = check_received_job_status (*job_status);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
@@ -1478,5 +1480,5 @@ int get_job_status (CONTROL_SESSION *control_session, JOB_SESSION *job_session, 
 
 error:
 
-    return CTC_FAILURE;
+    return retval;
 }
