@@ -1,8 +1,10 @@
 #include <stdio.h>
 #include <sys/socket.h>
+#include <sys/poll.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <errno.h>
 #include "ctc_network.h"
 
 int make_ctcp_header (CTCP_OP_ID op_id, char op_param, CONTROL_SESSION *control_session, JOB_SESSION *job_session, int header_data, CTCP *ctcp)
@@ -204,9 +206,63 @@ void set_job_desc (JOB_SESSION *job_session, unsigned short job_desc)
     job_session->job_desc = job_desc;
 }
 
-int recv_stream (int sockfd, char *data_buffer, int data_size)
+int recv_stream (int sockfd, char *buffer, int requested_recv_size, int timeout)
 {
+    struct pollfd poll_fds[1];
+    int poll_timeout;
+    int total_read_size;
+    int read_size;
+    int retval;
 
+    total_read_size = 0;
+
+    while (total_read_size < requested_recv_size)
+    {
+        poll_fds[0].fd = sockfd;
+        poll_fds[0].events = POLLIN;
+
+        if (timeout <= 0 || timeout > SOCKET_TIMEOUT)
+        {
+            poll_timeout = SOCKET_TIMEOUT;
+        }
+        else
+        {
+            poll_timeout = timeout;
+        }
+
+        retval = poll (poll_fds, 1, poll_timeout);
+
+        if (retval == 0) /* timeout */
+        {
+            return CTC_FAILED;
+        }
+        else if (retval < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+
+            return CTC_FAILED;
+        }
+        else
+        {
+            if (poll_fds[0].revents & POLLERR || poll_fds[0].revents & POLLHUP)
+            {
+                return CTC_FAILED;
+            }
+
+            read_size = read (sockfd, buffer + total_read_size, requested_recv_size - total_read_size);
+            if (read_size <= 0)
+            {
+                return CTC_FAILED;
+            }
+
+            total_read_size += read_size;
+        }
+    }
+
+    return CTC_SUCCESS;
 }
 
 int recv_ctcp_header (CTCP_OP_ID op_id, CONTROL_SESSION *control_session, JOB_SESSION *job_session, CTCP_HEADER *ctcp_header)
@@ -216,7 +272,7 @@ int recv_ctcp_header (CTCP_OP_ID op_id, CONTROL_SESSION *control_session, JOB_SE
     if (op_id == CTCP_CREATE_JOB_SESSION_RESULT ||
         op_id == CTCP_CAPTURED_DATA_RESULT)
     {
-        retval = recv_stream (job_session->sockfd, (char *)ctcp_header, CTCP_PACKET_HEADER_SIZE);
+        retval = recv_stream (job_session->sockfd, (char *)ctcp_header, CTCP_PACKET_HEADER_SIZE, 0);
         if (IS_FAILED (retval))
         {
             retval = CTC_FAILED_COMMUNICATE_JOB_SESSION;
@@ -225,7 +281,7 @@ int recv_ctcp_header (CTCP_OP_ID op_id, CONTROL_SESSION *control_session, JOB_SE
     }
     else
     {
-        retval = recv_stream (control_session->sockfd, (char *)ctcp_header, CTCP_PACKET_HEADER_SIZE);
+        retval = recv_stream (control_session->sockfd, (char *)ctcp_header, CTCP_PACKET_HEADER_SIZE, 0);
         if (IS_FAILED (retval))
         {
             retval = CTC_FAILED_COMMUNICATE_CONTROL_SESSION;
@@ -796,7 +852,7 @@ int fetch_capture_transaction (CONTROL_SESSION *control_session, JOB_SESSION *jo
 
     int data_payload_size;
 
-    while (job_session->job_thread_is_alive == true)
+    while (job_session->is_alive_job_thread == true)
     {
         data_payload_size = 0;
 
@@ -837,7 +893,7 @@ void *job_thread_main (void *arg)
     CONTROL_SESSION *control_session = job_thread_args->control_session;
     JOB_SESSION *job_session = job_thread_args->job_session;
 
-    job_session->job_thread_is_alive = true;
+    job_session->is_alive_job_thread = true;
 
     init_capture_trans_buffer_array (job_session);
 
@@ -848,7 +904,7 @@ void *job_thread_main (void *arg)
 
     // 소켓 정리, 종료시 자원 정리
     
-    job_session->job_thread_is_alive = false;
+    job_session->is_alive_job_thread = false;
 
     retval = CTC_SUCCESS;
 
@@ -858,7 +914,7 @@ error:
 
     // 소켓 정리, 종료시 자원 정리
 
-    job_session->job_thread_is_alive = false;
+    job_session->is_alive_job_thread = false;
 
     retval = CTC_FAILED;
 
@@ -882,7 +938,7 @@ int destroy_job_thread (JOB_SESSION *job_session)
 {
     int exit_status;
 
-    job_session->job_thread_is_alive = false;
+    job_session->is_alive_job_thread = false;
 
     if (IS_FAILED (pthread_join (job_session->job_thread.thr_id, NULL)))
     {
@@ -969,19 +1025,19 @@ error:
     return retval;
 }
 
-int reinit_json_type_result (JSON_TYPE_RESULT *json_type_result)
+int reinit_json_result (JSON_RESULT *json_result)
 {
     int i;
 
-    for (i = 0; i < json_type_result->write_idx; i ++)
+    for (i = 0; i < json_result->write_idx; i ++)
     {
-        free (json_type_result->json[i]);
-        json_type_result->json[i] = NULL;
+        free (json_result->json[i]);
+        json_result->json[i] = NULL;
     }
 
-    json_type_result->write_idx = 0;
-    json_type_result->read_idx = 0;
-    json_type_result->is_fragmented = false;
+    json_result->write_idx = 0;
+    json_result->read_idx = 0;
+    json_result->is_fragmented = false;
 
     return CTC_SUCCESS;
 }
@@ -1061,7 +1117,7 @@ void set_read_pos (JOB_SESSION *job_session, char *next_read_pos)
     }
 }
 
-int read_data_header (char **read_pos_p, JSON_TYPE_RESULT *json_type_result)
+int read_data_header (char **read_pos_p, JSON_RESULT *json_result)
 {
     char *read_pos;
     char is_fragmented;
@@ -1073,11 +1129,11 @@ int read_data_header (char **read_pos_p, JSON_TYPE_RESULT *json_type_result)
 
     if (is_fragmented == CTC_RC_SUCCESS_FRAGMENTED)
     {
-        json_type_result->is_fragmented = true;
+        json_result->is_fragmented = true;
     }
     else if (is_fragmented == CTC_RC_SUCCESS)
     {
-        json_type_result->is_fragmented = false;
+        json_result->is_fragmented = false;
     }
     else
     {
@@ -1102,7 +1158,7 @@ int read_number_of_items (char **read_pos_p, int *number_of_items)
     memcpy (number_of_items, read_pos, sizeof (int));
     read_pos += sizeof (int);
 
-    if (*number_of_items > MAX_JSON_TYPE_RESULT_COUNT)
+    if (*number_of_items > JSON_RESULT_MAX_COUNT)
     {
         goto error;
     }
@@ -1350,7 +1406,7 @@ error:
     return CTC_FAILED;
 }
 
-int register_to_json_type_result (JSON_TYPE_RESULT *json_type_result, char *json_buffer)
+int register_to_json_result (JSON_RESULT *json_result, char *json_buffer)
 {
     char *json;
 
@@ -1360,7 +1416,7 @@ int register_to_json_type_result (JSON_TYPE_RESULT *json_type_result, char *json
         goto error;
     }
 
-    json_type_result->json[json_type_result->write_idx ++] = json;
+    json_result->json[json_result->write_idx ++] = json;
 
     return CTC_SUCCESS;
 
@@ -1369,7 +1425,7 @@ error:
     return CTC_FAILED;
 }
 
-int convert_capture_transaction_to_json (JOB_SESSION *job_session, JSON_TYPE_RESULT *json_type_result)
+int convert_capture_transaction_to_json (JOB_SESSION *job_session, JSON_RESULT *json_result)
 {
     int i;
     int number_of_items;
@@ -1385,7 +1441,7 @@ int convert_capture_transaction_to_json (JOB_SESSION *job_session, JSON_TYPE_RES
         goto end;
     }
 
-    if (IS_FAILED (read_data_header (&read_pos, json_type_result)))
+    if (IS_FAILED (read_data_header (&read_pos, json_result)))
     {
         goto error;
     }
@@ -1434,7 +1490,7 @@ int convert_capture_transaction_to_json (JOB_SESSION *job_session, JSON_TYPE_RES
             goto error;
         }
 
-        if (IS_FAILED (register_to_json_type_result (json_type_result, temp)))
+        if (IS_FAILED (register_to_json_result (json_result, temp)))
         {
             goto error;
         }
@@ -1451,14 +1507,14 @@ error:
     return CTC_FAILED;
 }
 
-int read_capture_transaction_in_json (JOB_SESSION *job_session, JSON_TYPE_RESULT *json_type_result)
+int read_capture_transaction_in_json (JOB_SESSION *job_session, JSON_RESULT *json_result)
 {
-    if (IS_FAILED (reinit_json_type_result (json_type_result)))
+    if (IS_FAILED (reinit_json_result (json_result)))
     {
         goto error;
     }
 
-    if (IS_FAILED (convert_capture_transaction_to_json (job_session, json_type_result)))
+    if (IS_FAILED (convert_capture_transaction_to_json (job_session, json_result)))
     {
         goto error;
     }

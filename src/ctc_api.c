@@ -103,38 +103,14 @@ int ctc_stop_capture (int ctc_handle, int job_descriptor, CTC_JOB_CLOSE_CONDITIO
     return stop_capture (ctc_handle, job_descriptor, close_condition);
 }
 
-int ctc_fetch_capture_transaction (int ctc_handle, int job_descriptor, char *result_buffer, int result_buffer_size, int *result_data_size)
+int ctc_fetch_capture_transaction (int ctc_handle, int job_descriptor, char *result_buffer, int result_buffer_size, int *result_size)
 {
-    bool is_fragmented;
-
-    if (IS_NULL (result_buffer) || result_buffer_size <= 0 ||
-        IS_NULL (result_data_size))
+    if (IS_NULL (result_buffer) || result_buffer_size <= 0 || IS_NULL (result_size))
     {
-        goto error;
+        return CTC_FAILED_INVALID_ARGS;
     }
 
-    if (IS_FAILED (read_capture_transaction (ctc_handle, job_descriptor, result_buffer, result_buffer_size, result_data_size, &is_fragmented)))
-    {
-        goto error;
-    }
-
-    if (*result_data_size == 0)
-    {
-        return CTC_SUCCESS_NO_DATA;
-    }
-
-    if (is_fragmented)
-    {
-        return CTC_SUCCESS_FRAGMENTED;
-    }
-    else
-    {
-        return CTC_SUCCESS;
-    }
-
-error:
-
-    return CTC_FAILED;
+    return fetch_capture_transaction (ctc_handle, job_descriptor, result_buffer, result_buffer_size, result_size);
 }
 
 int ctc_check_job_status (int ctc_handle, int job_descriptor, int *job_status)

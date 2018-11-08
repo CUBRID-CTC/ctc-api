@@ -3,17 +3,17 @@
 
 #include "ctc_network.h"
 
-#define CTC_HANDLE_MAX_COUNT 100 /* CTC_SESSION_GROUP_MAX */
-#define JOB_DESC_MAX_COUNT 10
+#define CTC_HANDLE_MAX_COUNT (100) /* CTC_SESSION_GROUP_MAX */
+#define JOB_DESC_MAX_COUNT   (10)
 
 typedef struct job_desc JOB_DESC;
 struct job_desc
 {
-    //int job_desc_id;
-
     JOB_SESSION job_session;
 
-    JSON_TYPE_RESULT json_type_result;
+    JSON_RESULT json_result;
+
+    json_t *json_array;
 };
 
 typedef struct ctc_handle CTC_HANDLE;
@@ -36,7 +36,7 @@ int register_table (int ctc_handle_id, int job_desc_id, char *user_name, char *t
 int unregister_table (int ctc_handle_id, int job_desc_id, char *user_name, char *table_name);
 int start_capture (int ctc_handle_id, int job_desc_id);
 int stop_capture (int ctc_handle_id, int job_desc_id, CTC_JOB_CLOSE_CONDITION job_close_condition);
-int read_capture_transaction (int ctc_handle_id, int job_desc_id, char *buffer, int buffer_size, int *data_size, bool *is_fragmented);
+int fetch_capture_transaction (int ctc_handle_id, int job_desc_id, char *buffer, int buffer_size, int *data_size);
 int check_job_status (int ctc_handle_id, int job_desc_id, int *job_status);
 
 #endif

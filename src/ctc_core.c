@@ -416,25 +416,24 @@ error:
     return retval;
 }
 
-void init_json_type_result (JSON_TYPE_RESULT *json_type_result)
+void init_json_result (JSON_RESULT *json_result)
 {
     int i;
 
-    for (i = 0; i < MAX_JSON_TYPE_RESULT_COUNT; i ++)
+    for (i = 0; i < JSON_ARRAY_SIZE; i ++)
     {
-        json_type_result->json[i] = NULL;
+        json_result->json[i] = NULL;
     }
 
-    json_type_result->write_idx = 0;
-    json_type_result->read_idx = 0;
-    json_type_result->is_fragmented = false;
+    json_result->json_read_idx = 0;
+    json_result->is_fragmented = false;
 }
 
 int cleanup_json_type_result (JSON_TYPE_RESULT *json_type_result)
 {
     int i;
 
-    for (i = 0; i < MAX_JSON_TYPE_RESULT_COUNT; i ++)
+    for (i = 0; i < JSON_RESULT_MAX_COUNT; i ++)
     {
         if (IS_NOT_NULL (json_type_result->json[i]))
         {
@@ -474,7 +473,7 @@ int start_capture (int ctc_handle_id, int job_desc_id)
         goto error;
     }
 
-    init_json_type_result (&job_desc->json_type_result);
+    init_json_result (&job_desc->json_result);
 
     return CTC_SUCCESS;
 
@@ -522,115 +521,126 @@ error:
     return retval;
 }
 
-bool is_exist_json_type_result (JSON_TYPE_RESULT *json_type_result)
+int read_json (JOB_DESC *job_desc, char *buffer, int buffer_size, int *data_size)
 {
-    if (json_type_result->read_idx < json_type_result->write_idx)
+    JSON_RESULT *json_result;
+    json_t *json;
+
+    json_t *json_array;
+    int json_array_size;
+
+    json_result = &job_desc->json_result;
+    json = json_result->json[json_result->json_read_idx];
+
+    if (IS_NULL (json))
     {
-        return true;
+        return CTC_SUCCESS_NO_DATA;
     }
-    else
+
+    json_array = job_desc->json_array;
+
+    while (IS_NOT_NULL (json))
     {
-        return false;
-    }
-}
+        json_array_append (json_array, json);
 
-int copy_json_type_result_to_user_buffer (JSON_TYPE_RESULT *json_type_result, char *buffer, int buffer_size, int *data_size, bool *is_fragmented)
-{
-    char *json;
-    int json_len;
+        json_array_size = json_dumpb (json_array, NULL, 0, 0);
 
-    int remaining_buffer_size;
-
-    remaining_buffer_size = buffer_size;
-
-    while (json_type_result->read_idx < json_type_result->write_idx)
-    {
-        json = json_type_result->json[json_type_result->read_idx];
-        json_len = strlen (json);
-
-        if (json_len < remaining_buffer_size)
+        if (json_array_size < buffer_size)
         {
-            memcpy (buffer, json, json_len);
-            buffer += json_len;
-
-            remaining_buffer_size -= json_len;
-
-            json_type_result->read_idx ++;
+            json_result->json_read_idx ++;
+            json = json_result->json[json_result->json_read_idx];
+        }
+        else if (json_array_size == buffer_size)
+        {
+            json_result->json_read_idx ++;
+            break;
         }
         else
         {
-            // 사용자 버퍼 크기가 적어서 데이터를 다 못 담는 경우는 무조건 fragmented
+            /* buffer overflow */
+            json_array_remove (json_array, json_array_size (json_array) - 1);
+            *is_buffer_full = true;
             break;
         }
     }
 
-    // 변환된 모든 데이터를 다 읽은 경우
-    // if (ctcp_packet == fragmented)
-    // then
-    //     fragmented
-    // else
-    //     no fragmented
-    if (json_type_result->read_idx == json_type_result->write_idx)
+    if (json_array_size (json_array) == 0)
     {
-        *is_fragmented = json_type_result->is_fragmented;
+        /* minimum required buffer size */
+        *data_size = json_dumpb (json, NULL, 0, 0) + 2;
+
+        return CTC_FAILED_TOO_SMALL_RESULT_BUFFER_SIZE;
+    }
+
+    *data_size = json_dumpb (json_array, buffer, buffer_size, 0);
+
+#if defined(DEBUG)
+    assert (*data_size <= buffer_size);
+#endif
+
+    if (json_result->is_fragmented == true)
+    {
+        return CTC_SUCCESS_FRAGMENTED;
     }
     else
     {
-        *is_fragmented = true;
+        json = json_result->json[json_result->json_read_idx];
+
+        if (IS_NOT_NULL (json))
+        {
+            return CTC_SUCCESS_FRAGMENTED;
+        }
+        else
+        {
+            return CTC_SUCCESS;
+        }
     }
-
-    *data_size = buffer_size - remaining_buffer_size;
-
-    return CTC_SUCCESS;
 }
 
-int read_capture_transaction (int ctc_handle_id, int job_desc_id, char *buffer, int buffer_size, int *data_size, bool *is_fragmented)
+int fetch_capture_transaction (int ctc_handle_id, int job_desc_id, char *buffer, int buffer_size, int *data_size)
 {
     CTC_HANDLE *ctc_handle;
     JOB_DESC *job_desc;
+    int retval;
 
-    if (IS_FAILED (find_ctc_handle (ctc_handle_id, &ctc_handle)))
+    retval = find_ctc_handle (ctc_handle_id, &ctc_handle);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
-    if (IS_FAILED (find_job_desc (ctc_handle, job_desc_id, &job_desc)))
+    retval = find_job_desc (ctc_handle, job_desc_id, &job_desc);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
-    *data_size = 0;
-    *is_fragmented = false;
-
-    // 이미 변환되어 남이있는 json 결과들이 있는가?
-    if (is_exist_json_type_result (&job_desc->json_type_result))
+    retval = read_json (job_desc, buffer, buffer_size, data_size);
+    if (IS_FAILED (retval))
     {
-        if (IS_FAILED (copy_json_type_result_to_user_buffer (&job_desc->json_type_result, buffer, buffer_size, data_size, is_fragmented)))
-        {
-            goto error;
-        }
+        goto error;
     }
     else
     {
-        if (IS_FAILED (read_capture_transaction_in_json (&job_desc->job_session, &job_desc->json_type_result)))
+        if (retval == CTC_SUCCESS_NO_DATA)
         {
-            goto error;
-        }
+            retval = convert_capture_transaction_to_json (&job_desc->job_session, &job_desc->json_result);
+            if (IS_FAILED (retval))
+            {
+                goto error;
+            }
 
-        if (is_exist_json_type_result (&job_desc->json_type_result))
-        {
-            if (IS_FAILED (copy_json_type_result_to_user_buffer (&job_desc->json_type_result, buffer, buffer_size, data_size, is_fragmented)))
+            retval = read_json (job_desc, buffer, buffer_size, data_size);
+            if (IS_FAILED (retval))
             {
                 goto error;
             }
         }
     }
 
-    return CTC_SUCCESS;
-
 error:
 
-    return CTC_FAILED;
+    return retval;
 }
 
 int check_job_status (int ctc_handle_id, int job_desc_id, int *job_status)
