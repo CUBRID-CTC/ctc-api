@@ -11,19 +11,19 @@
 #define CTCP_PATCH_VERSION 0
 #define CTCP_BUILD_VERSION 0
 
-#define CTCP_PACKET_MAX_SIZE       (4096)
-#define CTCP_PACKET_HEADER_SIZE    (16)
-#define CTCP_MAX_DATA_PAYLOAD_SIZE (CTCP_PACKET_MAX_SIZE - CTCP_PACKET_HEADER_SIZE)
+#define CTCP_PACKET_MAX_SIZE          (4096)
+#define CTCP_PACKET_HEADER_SIZE       (16)
+#define CTCP_MAX_DATA_PAYLOAD_SIZE    (CTCP_PACKET_MAX_SIZE - CTCP_PACKET_HEADER_SIZE)
 
-#define INITIAL_SESSION_GID (-1)
-#define INITIAL_JOB_DESC    (-1)
+#define POLL_TIMEOUT                  (3000) /* msec */
 
-#define SOCKET_TIMEOUT 5000 /* msec */
+#define INITIAL_SESSION_GID           (-1)
+#define INITIAL_JOB_DESC              (-1)
 
-#define MAX_CAPTURE_TRANS_BUFFER_COUNT 1000
-#define CAPTURE_TRANS_BUFFER_SIZE (CTCP_MAX_PACKET_SIZE * 50)
+#define CAPTURE_DATA_BUFFER_COUNT     (1000)
+#define CAPTURE_DATA_BUFFER_SIZE      (CTCP_PACKET_MAX_SIZE * 50)
 
-#define JSON_ARRAY_SIZE     (200)
+#define JSON_ARRAY_SIZE               (200)
 
 typedef enum ctcp_operation_id CTCP_OP_ID;
 enum ctcp_operation_id
@@ -142,19 +142,23 @@ struct job_thread_args
 typedef struct job_thread JOB_THREAD;
 struct job_thread
 {
-    pthread_t id;
-    JOB_THREAD_ARGS args;
-    int retval;
+    pthread_t thr_id;
+    JOB_THREAD_ARGS thr_args;
+    int thr_retval;
 };
 
-typedef struct capture_transaction_buffer CAPTURE_TRANS_BUFFER;
-struct capture_transaction_buffer
+typedef struct capture_data CAPTURE_DATA;
+struct capture_data
 {
-    char buffer[CAPTURE_TRANS_BUFFER_SIZE];
-    int remaining_buffer_size;
+    char *raw_data_buffer[CAPTURE_DATA_BUFFER_COUNT];
 
-    volatile char *write_pos;
-    char *read_pos;
+    volatile int raw_data_buffer_w_idx;
+    volatile int raw_data_buffer_r_idx;
+
+    volatile char *buffer_w_pos;
+    char *buffer_r_pos;
+
+    int remaining_buffer_size;
 };
 
 typedef struct job_session JOB_SESSION;
@@ -166,15 +170,10 @@ struct job_session
 
     CTC_JOB_CLOSE_CONDITION job_close_condition;
 
+    CAPTURE_DATA capture_data;
+
     JOB_THREAD job_thread;
     bool is_alive_job_thread;
-
-    CAPTURE_TRANS_BUFFER *capture_trans_buffer[MAX_CAPTURE_TRANS_BUFFER_COUNT]; // job 쓰레드가 쓰고, main 쓰레드가 읽기 때문에 volatile 선언이 필요한지 확인
-    volatile int write_idx;
-    int read_idx;
-
-    // error handling
-    char result_code;
 };
 
 typedef struct control_session CONTROL_SESSION;

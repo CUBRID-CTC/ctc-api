@@ -1,6 +1,10 @@
 #ifndef _CTC_API_H_
 #define _CTC_API_H_
 
+#define CTC_SUCCESS            (0)
+#define CTC_SUCCESS_FRAGMENTED (1)
+#define CTC_SUCCESS_NO_DATA    (2)
+
 typedef enum ctc_connection_type CTC_CONN_TYPE;
 enum ctc_connection_type
 {
@@ -15,12 +19,8 @@ enum ctc_job_close_condition
     CTC_JOB_CLOSE_AFTER_TRANSACTION = 1
 };
 
-enum ctc_return_value
+enum ctc_error_code
 {
-    CTC_SUCCESS_NO_DATA                       =  2,
-    CTC_SUCCESS_FRAGMENTED                    =  1,
-    CTC_SUCCESS                               =  0,
-
     CTC_FAILED                                = -1,
     CTC_FAILED_INVALID_ARGS                   = -2,
     CTC_FAILED_INVALID_CONN_STRING            = -3,
@@ -38,7 +38,10 @@ enum ctc_return_value
     CTC_FAILED_OPEN_JOB_SESSION               = -103, 
     CTC_FAILED_CLOSE_JOB_SESSION              = -104,
     CTC_FAILED_COMMUNICATE_JOB_SESSION        = -105,
+    CTC_FAILED_POLL_TIMEOUT                   = -107,
     CTC_FAILED_OVERFLOW_DATA_PAYLOAD          = -106,
+    CTC_FAILED_OVERFLOW_DATA_BUFFER           = -106,
+
 
     CTC_FAILED_RECEIVE_INVALID_OP_ID          = -107,
     CTC_FAILED_RECEIVE_INVALID_JOB_DESC       = -108,
