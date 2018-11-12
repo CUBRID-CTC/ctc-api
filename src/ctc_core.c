@@ -163,7 +163,7 @@ int parse_url (char *url, CTC_HANDLE *ctc_handle)
 
 error:
 
-    return CTC_FAILED_INVALID_CONN_STRING;
+    return CTC_FAILED_INVALID_CONNECTION_STRING;
 }
 
 int open_connection (CTC_CONN_TYPE conn_type, char *url, int *ctc_handle_id)
@@ -429,24 +429,18 @@ void init_json_result (JSON_RESULT *json_result)
     json_result->is_fragmented = false;
 }
 
-int cleanup_json_type_result (JSON_TYPE_RESULT *json_type_result)
+void reinit_json_result (JSON_RESULT *json_result)
 {
     int i;
 
-    for (i = 0; i < JSON_RESULT_MAX_COUNT; i ++)
+    for (i = 0; i < json_result->json_read_idx; i ++)
     {
-        if (IS_NOT_NULL (json_type_result->json[i]))
-        {
-            free (json_type_result->json[i]);
-            json_type_result->json[i] = NULL;
-        }
+        json_decref (json_result->json[i]);
+        json_result->json[i] = NULL;
     }
 
-    json_type_result->write_idx = 0;
-    json_type_result->read_idx = 0;
-    json_type_result->is_fragmented = false;
-
-    return CTC_SUCCESS;
+    json_result->json_read_idx = 0;
+    json_result->is_fragmented = false;
 }
 
 int start_capture (int ctc_handle_id, int job_desc_id)
@@ -505,7 +499,7 @@ int stop_capture (int ctc_handle_id, int job_desc_id, CTC_JOB_CLOSE_CONDITION jo
     {
         goto error;
     }
-
+#if 0
     if (job_close_condition == CTC_JOB_CLOSE_IMMEDIATELY)
     {
         if (IS_FAILED (cleanup_json_type_result (&job_desc->json_type_result)))
@@ -513,6 +507,7 @@ int stop_capture (int ctc_handle_id, int job_desc_id, CTC_JOB_CLOSE_CONDITION jo
             goto error;
         }
     }
+#endif
 
     return CTC_SUCCESS;
 
@@ -527,7 +522,8 @@ int read_json (JOB_DESC *job_desc, char *buffer, int buffer_size, int *data_size
     json_t *json;
 
     json_t *json_array;
-    int json_array_size;
+
+    int result_size;
 
     json_result = &job_desc->json_result;
     json = json_result->json[json_result->json_read_idx];
@@ -543,14 +539,14 @@ int read_json (JOB_DESC *job_desc, char *buffer, int buffer_size, int *data_size
     {
         json_array_append (json_array, json);
 
-        json_array_size = json_dumpb (json_array, NULL, 0, 0);
+        result_size = json_dumpb (json_array, NULL, 0, 0);
 
-        if (json_array_size < buffer_size)
+        if (result_size < buffer_size)
         {
             json_result->json_read_idx ++;
             json = json_result->json[json_result->json_read_idx];
         }
-        else if (json_array_size == buffer_size)
+        else if (result_size == buffer_size)
         {
             json_result->json_read_idx ++;
             break;
@@ -559,7 +555,6 @@ int read_json (JOB_DESC *job_desc, char *buffer, int buffer_size, int *data_size
         {
             /* buffer overflow */
             json_array_remove (json_array, json_array_size (json_array) - 1);
-            *is_buffer_full = true;
             break;
         }
     }
@@ -624,16 +619,21 @@ int fetch_capture_transaction (int ctc_handle_id, int job_desc_id, char *buffer,
     {
         if (retval == CTC_SUCCESS_NO_DATA)
         {
-            retval = convert_capture_transaction_to_json (&job_desc->job_session, &job_desc->json_result);
+            reinit_json_result (&job_desc->json_result);
+
+            retval = convert_capture_transaction_to_json (&job_desc->job_session.capture_data, &job_desc->json_result);
             if (IS_FAILED (retval))
             {
                 goto error;
             }
 
-            retval = read_json (job_desc, buffer, buffer_size, data_size);
-            if (IS_FAILED (retval))
+            if (retval != CTC_SUCCESS_NO_DATA)
             {
-                goto error;
+                retval = read_json (job_desc, buffer, buffer_size, data_size);
+                if (IS_FAILED (retval))
+                {
+                    goto error;
+                }
             }
         }
     }

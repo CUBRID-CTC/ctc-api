@@ -206,6 +206,7 @@ void set_job_desc (JOB_SESSION *job_session, unsigned short job_desc)
     job_session->job_desc = job_desc;
 }
 
+// 서버에서 연결 끊어진 경우에 대한 처리 고려
 int recv_stream (int sockfd, char *buffer, int requested_recv_size, int timeout)
 {
     struct pollfd poll_fds[1];
@@ -717,6 +718,7 @@ void init_capture_data (CAPTURE_DATA *capture_data)
     for (i = 0; i < CAPTURE_DATA_BUFFER_COUNT; i ++)
     {
         capture_data->raw_data_buffer[i] = NULL;
+        capture_date->buffer_data_limit[i] = NULL;
     }
 
     capture_data->raw_data_buffer_w_idx = 0;
@@ -728,22 +730,17 @@ void init_capture_data (CAPTURE_DATA *capture_data)
     capture_data->remaining_buffer_size = 0;
 }
 
-int cleanup_capture_trans_buffer (JOB_SESSION *job_session)
+void clean_capture_data (CAPTURE_DATA *capture_data)
 {
     int i;
 
-    for (i = 0; i < MAX_CAPTURE_DATA_BUFFER_COUNT; i ++)
+    for (i = 0; i < CAPTURE_DATA_BUFFER_COUNT; i ++)
     {
-        if (IS_NOT_NULL (job_session->capture_trans_buffer[i]))
+        if (IS_NOT_NULL (capture_data->raw_data_buffer[i]))
         {
-            free (job_session->capture_trans_buffer[i]);
+            free (capture_data->raw_data_buffer[i]);
         }
     }
-
-    job_session->write_idx = 0;
-    job_session->read_idx = 0;
-
-    return CTC_SUCCESS;
 }
 
 int alloc_data_buffer (CAPTURE_DATA *capture_data, int requested_size, char **data_buffer_p)
@@ -793,6 +790,8 @@ int alloc_data_buffer (CAPTURE_DATA *capture_data, int requested_size, char **da
             }
             else
             {
+                capture_data->buffer_data_limit[capture_data->raw_data_buffer_w_idx] = capture_data->buffer_w_pos;
+
                 capture_data->raw_data_buffer_w_idx ++;
 
                 if (capture_data->raw_data_buffer_w_idx == CAPTURE_DATA_BUFFER_COUNT)
@@ -820,6 +819,11 @@ int read_received_data (JOB_SESSION *job_session, char *buffer, int buffer_size,
 {
     int retval;
 
+    /* data info */
+    memcpy (buffer, &buffer_size, sizeof (buffer_size));
+    buffer += sizeof (buffer_size);
+
+    /* data info */
     memcpy (buffer, &is_fragmented, sizeof (is_fragmented));
     buffer += sizeof (is_fragmented);
 
@@ -861,7 +865,7 @@ int read_received_capture_transaction (CONTROL_SESSION *control_session, JOB_SES
         if (data_payload_size != 0)
         {
             data_buffer = NULL;
-            need_buffer_size = sizeof (char) + data_payload_size; /* sizeof (char) for packet fragmented info */
+            need_buffer_size = sizeof (int) + sizeof (char) + data_payload_size;
 
             retval = alloc_data_buffer (&job_session->capture_data, need_buffer_size, &data_buffer);
             if (IS_FAILED (retval))
@@ -921,8 +925,6 @@ int create_job_thread (CONTROL_SESSION *control_session, JOB_SESSION *job_sessio
 
 int destroy_job_thread (JOB_SESSION *job_session)
 {
-    int exit_status;
-
     job_session->is_alive_job_thread = false;
 
     if (IS_FAILED (pthread_join (job_session->job_thread.thr_id, NULL)))
@@ -962,11 +964,6 @@ error:
     return retval;
 }
 
-void set_job_close_condition (JOB_SESSION *job_session, CTC_JOB_CLOSE_CONDITION job_close_condition) 
-{
-    job_session->job_close_condition = job_close_condition;
-}
-
 int request_stop_capture (CONTROL_SESSION *control_session, JOB_SESSION *job_session, CTC_JOB_CLOSE_CONDITION job_close_condition)
 {
     int retval;
@@ -985,23 +982,18 @@ int request_stop_capture (CONTROL_SESSION *control_session, JOB_SESSION *job_ses
 
     if (job_close_condition == CTC_JOB_CLOSE_IMMEDIATELY)
     {
-        if (IS_FAILED (destroy_job_thread (job_session)))
+        retval = destroy_job_thread (job_session);
+        if (IS_FAILED (retval))
         {
             goto error;
         }
 
-        if (IS_FAILED (cleanup_capture_trans_buffer (job_session)))
+        retval = clean_capture_data (&job_session->capture_data);
+        if (IS_FAILED (retval))
         {
             goto error;
         }
     }
-    else
-    {
-        // 이번에 지원 안함
-        goto error;
-    }
-
-    set_job_close_condition (job_session, job_close_condition);
 
     return CTC_SUCCESS;
 
@@ -1027,68 +1019,49 @@ int reinit_json_result (JSON_RESULT *json_result)
     return CTC_SUCCESS;
 }
 
-char *get_read_pos (JOB_SESSION *job_session)
+char *get_read_pos (CAPTURE_DATA *capture_data)
 {
-    CAPTURE_DATA_BUFFER *capture_trans_buffer;
-    bool is_exist_data;
+    char *read_pos = NULL;
 
-    is_exist_data = false;
-
-    while (1)
+    do
     {
-        if (job_session->read_idx != job_session->write_idx)
+        if (IS_NULL (capture_data->buffer_r_pos))
         {
-            capture_trans_buffer = job_session->capture_trans_buffer[job_session->read_idx];
-
-            if (capture_trans_buffer->read_pos < capture_trans_buffer->write_pos)
-            {
-                is_exist_data = true;
-                break;
-            }
-            else if (capture_trans_buffer->read_pos == capture_trans_buffer->write_pos)
-            {
-                // 해당 버퍼는 끝까지 읽었다는 것, 여기를 타는데 좀 이상해 보이는 부분도 있다. 이제 막 읽기 시작했고, write 부분이랑 같지 않은데 여기를 탄다면 이상
-                free (capture_trans_buffer);
-
-                job_session->capture_trans_buffer[job_session->read_idx] = NULL;
-                job_session->read_idx ++;
-            }
-            else
-            {
-                // assert
-            }
+            read_pos = capture_data->raw_data_buffer[capture_data->raw_data_buffer_r_idx];
+            capture_data->buffer_r_pos = read_pos;
         }
         else
         {
-            capture_trans_buffer = job_session->capture_trans_buffer[job_session->read_idx];
+            read_pos = capture_data->buffer_r_pos;
+        }
 
-            if (IS_NULL (capture_trans_buffer))
+        if (read_pos != capture_data->buffer_data_limit[capture_data->raw_data_buffer_r_idx])
+        {
+#if defined(DEBUG)
+            assert (read_pos == NULL);
+#endif
+            return read_pos;
+        }
+        else
+        {
+            if (capture_data->raw_data_buffer_r_idx != capture_data->raw_data_buffer_w_idx)
             {
-                is_exist_data = false;
-                break;
-            }
+                free (capture_data->raw_data_buffer[raw_data_buffer_r_idx]);
 
-            if (capture_trans_buffer->read_pos < capture_trans_buffer->write_pos)
-            {
-                is_exist_data = true;
-                break;
-            }
-            else if (capture_trans_buffer->read_pos == capture_trans_buffer->write_pos)
-            {
-                is_exist_data = false;
-                break;
+                capture_data->raw_data_buffer[raw_data_buffer_r_idx] = NULL;
+                capture_data->raw_data_buffer_r_idx ++;
+
+                capture_data->buffer_r_pos = NULL;
             }
             else
             {
-                // assert
+                return NULL;
             }
         }
-    }
-
-    return is_exist_data ? capture_trans_buffer->read_pos : NULL;
+    } while (1);
 }
 
-void set_read_pos (JOB_SESSION *job_session, char *next_read_pos)
+void set_next_read_pos (CAPTURE_DATA *capture_data, char *next_pos)
 {
     CAPTURE_DATA_BUFFER *capture_trans_buffer;
 
@@ -1102,15 +1075,270 @@ void set_read_pos (JOB_SESSION *job_session, char *next_read_pos)
     }
 }
 
-int read_data_header (char **read_pos_p, JSON_RESULT *json_result)
+int read_data_info (char **read_pos_p, int *read_data_size, char *is_fragmented)
 {
     char *read_pos;
-    char is_fragmented;
 
     read_pos = *read_pos_p;
 
-    memcpy (&is_fragmented, read_pos, sizeof (is_fragmented));
-    read_pos += sizeof (is_fragmented);
+    memcpy (read_data_size, read_pos, sizeof (int));
+    read_pos += sizeof (int);
+
+    memcpy (is_fragmented, read_pos, sizeof (char));
+    read_pos += sizeof (char);
+
+    *read_pos_p = read_pos;
+
+    return CTC_SUCCESS;
+}
+
+int read_number_of_items (char **read_pos_p, int *number_of_items)
+{
+    char *read_pos;
+
+    read_pos = *read_pos_p;
+
+    memcpy (number_of_items, read_pos, sizeof (int));
+    read_pos += sizeof (int);
+
+    if (*number_of_items <= 0 ||
+        *number_of_items > JSON_ARRAY_SIZE)
+    {
+        return CTC_FAILED_CONVERT_TO_JSON_FORMAT; 
+    }
+
+    *read_pos_p = read_pos;
+
+    return CTC_SUCCESS;
+}
+
+int read_transaction_id (char **read_pos_p, json_t *root)
+{
+    int tx_id;
+
+    char *read_pos;
+
+    read_pos = *read_pos_p;
+
+    memcpy (&tx_id, read_pos, sizeof (int));
+    read_pos += sizeof (int);
+
+    if (tx_id < 0)
+    {
+        return CTC_FAILED_CONVERT_TO_JSON_FORMAT;
+    }
+
+    json_object_set_new (root, "Transaction ID", json_integer (tx_id));
+
+    *read_pos_p = read_pos;
+
+    return CTC_SUCCESS;
+}
+
+int read_user_name (char **read_pos_p, json_t *root)
+{
+    char user_name[128];
+    int user_name_len;
+
+    char *read_pos;
+
+    read_pos = *read_pos_p;
+
+    memcpy (&user_name_len, read_pos, sizeof (int));
+    read_pos += sizeof (int);
+
+    if (user_name_len <= 0)
+    {
+        return CTC_FAILED_CONVERT_TO_JSON_FORMAT;
+    }
+
+    memcpy (user_name, read_pos, user_name_len);
+    read_pos += user_name_len;
+
+    user_name[user_name_len] = '\0';
+
+    json_object_set_new (root, "User", json_string (user_name));
+
+    *read_pos_p = read_pos;
+
+    return CTC_SUCCESS;
+}
+
+int read_table_name (char **read_pos_p, json_t *root)
+{
+    char table_name[128];
+    int table_name_len;
+
+    char *read_pos;
+
+    read_pos = *read_pos_p;
+
+    memcpy (&table_name_len, read_pos, sizeof (int));
+    read_pos += sizeof (int);
+
+    if (table_name_len <= 0)
+    {
+        return CTC_FAILED_CONVERT_TO_JSON_FORMAT;
+    }
+
+    memcpy (table_name, read_pos, table_name_len);
+    read_pos += table_name_len;
+
+    table_name[table_name_len] = '\0';
+
+    json_object_set_new (root, "Table", json_string (table_name));
+
+    *read_pos_p = read_pos;
+
+    return CTC_SUCCESS;
+}
+
+int read_statement_type (char **read_pos_p, json_t *root)
+{
+    int stmt_type;
+
+    char *read_pos;
+
+    read_pos = *read_pos_p;
+
+    memcpy (&stmt_type, read_pos, sizeof (int));
+    read_pos += sizeof (int);
+
+    if (stmt_type == CTC_STMT_TYPE_INSERT)
+    {
+        json_object_set_new (root, "Statement type", json_string ("insert"));
+    }
+    else if (stmt_type == CTC_STMT_TYPE_UPDATE)
+    {
+        json_object_set_new (root, "Statement type", json_string ("update"));
+    }
+    else if (stmt_type == CTC_STMT_TYPE_DELETE)
+    {
+        json_object_set_new (root, "Statement type", json_string ("delete"));
+    }
+    else
+    {
+        return CTC_FAILED_CONVERT_TO_JSON_FORMAT;
+    }
+
+    *read_pos_p = read_pos;
+
+    return CTC_SUCCESS;
+}
+
+int read_columns (char **read_pos_p, json_t *root)
+{
+    char attr_name[128];
+    int attr_name_len;
+
+    char attr_val[128];
+    int attr_val_len;
+
+    int number_of_attr;
+    int i;
+
+    char *read_pos;
+
+    json_t *columns;
+
+    read_pos = *read_pos_p;
+
+    memcpy (&number_of_attr, read_pos, sizeof (int));
+    read_pos += sizeof (int);
+
+    if (number_of_attr <= 0)
+    {
+        return CTC_FAILED_CONVERT_TO_JSON_FORMAT;
+    }
+
+    columns = json_object ();
+    if (IS_NULL (columns))
+    {
+        return CTC_FAILED_CONVERT_TO_JSON_FORMAT;
+    }
+
+    for (i = 0; i < number_of_attr; i ++)
+    {
+        /* attribute name */
+        memcpy (&attr_name_len, read_pos, sizeof (int));
+        read_pos += sizeof (int);
+
+        if (attr_name_len <= 0)
+        {
+            return CTC_FAILED_CONVERT_TO_JSON_FORMAT;
+        }
+
+        memcpy (attr_name, read_pos, attr_name_len);
+        read_pos += attr_name_len;
+
+        attr_name[attr_name_len] = '\0';
+
+        /* attribute value */
+        memcpy (&attr_val_len, read_pos, sizeof (int));
+        read_pos += sizeof (int);
+
+        if (attr_val_len <= 0 )
+        {
+            return CTC_FAILED_CONVERT_TO_JSON_FORMAT;
+        }
+
+        memcpy (attr_val, read_pos, attr_val_len);
+        read_pos += attr_val_len;
+
+        attr_val[attr_val_len] = '\0';
+
+        json_object_set_new (columns, attr_name, json_string (attr_val));
+    }
+
+    json_object_set_new (root, "Columns", columns);
+
+    json_decref (columns);
+
+    *read_pos_p = read_pos;
+
+    return CTC_SUCCESS;
+}
+
+int register_json (JSON_RESULT *json_result, int register_idx, json_t *json)
+{
+    if (IS_NOT_NULL (json_result->json[register_idx]))
+    {
+        return CTC_FAILED_CONVERT_TO_JSON_FORMAT;
+    }
+
+    json_result->json[register_idx] = json;
+
+    return CTC_SUCCESS;
+}
+
+int convert_capture_transaction_to_json (CAPTURE_DATA *capture_data, JSON_RESULT *json_result)
+{
+    char *read_pos = NULL;
+    int read_data_size;
+    int number_of_items;
+    int i;
+
+    char is_fragmented;
+
+    json_t *root;
+
+    int retval;
+
+    read_pos = get_read_pos (capture_data);
+    if (IS_NULL (read_pos))
+    {
+        return CTC_SUCCESS_NO_DATA;
+    }
+
+    retval = read_data_info (&read_pos, &read_data_size, &is_fragmented);
+    if (IS_FAILED (retval))
+    {
+        goto error;
+    }
+
+#if defined(DEBUG)
+    assert (read_data_size == 0);
+#endif
 
     if (is_fragmented == CTC_RC_SUCCESS_FRAGMENTED)
     {
@@ -1125,357 +1353,57 @@ int read_data_header (char **read_pos_p, JSON_RESULT *json_result)
         goto error;
     }
 
-    *read_pos_p = read_pos;
-
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILED;
-}
-
-int read_number_of_items (char **read_pos_p, int *number_of_items)
-{
-    char *read_pos;
-
-    read_pos = *read_pos_p;
-
-    memcpy (number_of_items, read_pos, sizeof (int));
-    read_pos += sizeof (int);
-
-    if (*number_of_items > JSON_RESULT_MAX_COUNT)
-    {
-        goto error;
-    }
-
-    *read_pos_p = read_pos;
-
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILED;
-}
-
-int read_and_write_transaction_id (char **read_pos_p, char **write_pos_p)
-{
-    char *read_pos;
-    char *write_pos;
-
-    char *tx_id = "{ \"Transaction ID\": \"";
-    char *tx_id_val2 = "777";
-    int tx_id_val;
-
-    read_pos = *read_pos_p;
-    write_pos = *write_pos_p;
-
-    memcpy (write_pos, tx_id, strlen (tx_id));
-    write_pos += strlen (tx_id);
-
-    memcpy (&tx_id_val, read_pos, sizeof (int));
-    read_pos += sizeof (int);
-
-    //memcpy (write_pos, &tx_id_val, sizeof (int));
-    //write_pos += sizeof (int);
-
-    memcpy (write_pos, tx_id_val2, strlen (tx_id_val2));
-    write_pos += strlen (tx_id_val2);
-
-    *read_pos_p = read_pos;
-    *write_pos_p = write_pos;
-
-    return CTC_SUCCESS;
-}
-
-int read_and_write_user_name (char **read_pos_p, char **write_pos_p)
-{
-    char *read_pos;
-    char *write_pos;
-
-    char *user_name = "\", \"User\": \"";
-    int user_name_len = 0;
-
-    read_pos = *read_pos_p;
-    write_pos = *write_pos_p;
-
-    memcpy (write_pos, user_name, strlen (user_name));
-    write_pos += strlen (user_name);
-
-    memcpy (&user_name_len, read_pos, sizeof (int));
-    read_pos += sizeof (int);
-
-    if (user_name_len <= 0)
-    {
-        goto error;
-    }
-
-    memcpy (write_pos, read_pos, user_name_len);
-    read_pos += user_name_len;
-    write_pos += user_name_len;
-
-    *read_pos_p = read_pos;
-    *write_pos_p = write_pos;
-
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILED;
-}
-
-int read_and_write_table_name (char **read_pos_p, char **write_pos_p)
-{
-    char *read_pos;
-    char *write_pos;
-
-    char *table_name = "\", \"Table\": \"";
-    int table_name_len = 0;
-
-    read_pos = *read_pos_p;
-    write_pos = *write_pos_p;
-
-    memcpy (write_pos, table_name, strlen (table_name));
-    write_pos += strlen (table_name);
-
-    memcpy (&table_name_len, read_pos, sizeof (int));
-    read_pos += sizeof (int);
-
-    if (table_name_len <= 0)
-    {
-        goto error;
-    }
-
-    memcpy (write_pos, read_pos, table_name_len);
-    read_pos += table_name_len;
-    write_pos += table_name_len;
-
-    *read_pos_p = read_pos;
-    *write_pos_p = write_pos;
-
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILED;
-}
-
-int read_and_write_stmt_type (char **read_pos_p, char **write_pos_p)
-{
-    char *read_pos;
-    char *write_pos;
-
-    char *stmt_type_insert = "\", \"Statement type\": \"insert\", ";
-    char *stmt_type_update = "\", \"Statement type\": \"update\", ";
-    char *stmt_type_delete = "\", \"Statement type\": \"delete\", ";
-
-    int stmt_type;
-
-    read_pos = *read_pos_p;
-    write_pos = *write_pos_p;
-
-    memcpy (&stmt_type, read_pos, sizeof (int));
-    read_pos += sizeof (int);
-
-    switch (stmt_type)
-    {
-        case CTC_STMT_TYPE_INSERT:
-            memcpy (write_pos, stmt_type_insert, strlen (stmt_type_insert));
-            write_pos += strlen (stmt_type_insert);
-            break;
-        case CTC_STMT_TYPE_UPDATE:
-            memcpy (write_pos, stmt_type_update, strlen (stmt_type_update));
-            write_pos += strlen (stmt_type_update);
-            break;
-        case CTC_STMT_TYPE_DELETE:
-            memcpy (write_pos, stmt_type_delete, strlen (stmt_type_delete));
-            write_pos += strlen (stmt_type_delete);
-            break;
-        default:
-            goto error;
-    }
-
-    *read_pos_p = read_pos;
-    *write_pos_p = write_pos;
-
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILED;
-}
-
-int read_and_write_columns (char **read_pos_p, char **write_pos_p)
-{
-    char *read_pos;
-    char *write_pos;
-
-    char *columns = "\"Columns\": { \"";
-    char *colon = "\": \"";
-    char *comma = "\", \"";
-    char *end = "\" } }"; // null 문자 취급되는지 확인
-
-    int number_of_column;
-
-    int column_name_len;
-    int column_value_len;
-
-    int i;
-
-    read_pos = *read_pos_p;
-    write_pos = *write_pos_p;
-
-    memcpy (write_pos, columns, strlen (columns));
-    write_pos += strlen (columns);
-
-    memcpy (&number_of_column, read_pos, sizeof (int));
-    read_pos += sizeof (int);
-
-    if (number_of_column <= 0)
-    {
-        goto error;
-    }
-
-    for (i = 0; i < number_of_column; i ++)
-    {
-        /* column name */
-        memcpy (&column_name_len, read_pos, sizeof (int));
-        read_pos += sizeof (int);
-
-        if (column_name_len <= 0)
-        {
-            goto error;
-        }
-
-        memcpy (write_pos, read_pos, column_name_len);
-        read_pos += column_name_len;
-        write_pos += column_name_len;
-
-        memcpy (write_pos, colon, strlen (colon));
-        write_pos += strlen (colon);
-
-        /* column value */
-        memcpy (&column_value_len, read_pos, sizeof (int));
-        read_pos += sizeof (int);
-
-        if (column_value_len <= 0 )
-        {
-            goto error;
-        }
-
-        memcpy (write_pos, read_pos, column_value_len);
-        read_pos += column_value_len;
-        write_pos += column_value_len;
-
-        if (i == number_of_column - 1)
-        {
-            memcpy (write_pos, end, strlen (end));
-            write_pos += strlen (end);
-        }
-        else
-        {
-            memcpy (write_pos, comma, strlen (comma));
-            write_pos += strlen (comma);
-        }
-    }
-
-    write_pos[0] = '\0'; // 문자열로 만들어 준다.
-    write_pos ++;
-
-    *read_pos_p = read_pos;
-    *write_pos_p = write_pos;
-
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILED;
-}
-
-int register_to_json_result (JSON_RESULT *json_result, char *json_buffer)
-{
-    char *json;
-
-    json = strdup (json_buffer);
-    if (IS_NULL (json))
-    {
-        goto error;
-    }
-
-    json_result->json[json_result->write_idx ++] = json;
-
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILED;
-}
-
-int convert_capture_transaction_to_json (JOB_SESSION *job_session, JSON_RESULT *json_result)
-{
-    int i;
-    int number_of_items;
-
-    char *read_pos;
-    char *write_pos;
-
-    char temp[4096];
-
-    read_pos = get_read_pos (job_session);
-    if (IS_NULL (read_pos))
-    {
-        goto end;
-    }
-
-    if (IS_FAILED (read_data_header (&read_pos, json_result)))
-    {
-        goto error;
-    }
-
-    if (IS_FAILED (read_number_of_items (&read_pos, &number_of_items)))
-    {
-        goto error;
-    }
-
-    if (number_of_items <= 0)
+    retval = read_number_of_items (&read_pos, &number_of_items);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
     for (i = 0; i < number_of_items; i ++)
     {
-        write_pos = temp;
+        root = json_object ();
+        if (IS_NULL (root))
+        {
+            goto error;
+        }
 
         /* Transaction ID */
-        if (IS_FAILED (read_and_write_transaction_id (&read_pos, &write_pos)))
+        retval = read_transaction_id (&read_pos, root);
+        if (IS_FAILED (retval))
         {
             goto error;
         }
 
         /* User name */
-        if (IS_FAILED (read_and_write_user_name (&read_pos, &write_pos)))
+        retval = read_user_name (&read_pos, root);
+        if (IS_FAILED (retval))
         {
             goto error;
         }
 
         /* Table name */
-        if (IS_FAILED (read_and_write_table_name (&read_pos, &write_pos)))
+        retval = read_table_name (&read_pos, root)
+        if (IS_FAILED (retval))
         {
             goto error;
         }
 
         /* Statement type */
-        if (IS_FAILED (read_and_write_stmt_type (&read_pos, &write_pos)))
+        retval = read_statement_type (&read_pos, root);
+        if (IS_FAILED (retval))
         {
             goto error;
         }
 
         /* Columns */
-        if (IS_FAILED (read_and_write_columns (&read_pos, &write_pos)))
+        retval = read_columns (&read_pos, root);
+        if (IS_FAILED (retval))
         {
             goto error;
         }
 
-        if (IS_FAILED (register_to_json_result (json_result, temp)))
+        retval = register_json (json_result, i, root);
+        if (IS_FAILED (retval))
         {
             goto error;
         }
@@ -1483,32 +1411,11 @@ int convert_capture_transaction_to_json (JOB_SESSION *job_session, JSON_RESULT *
 
     set_read_pos (job_session, read_pos);
 
-end:
-
     return CTC_SUCCESS;
 
 error:
 
-    return CTC_FAILED;
-}
-
-int read_capture_transaction_in_json (JOB_SESSION *job_session, JSON_RESULT *json_result)
-{
-    if (IS_FAILED (reinit_json_result (json_result)))
-    {
-        goto error;
-    }
-
-    if (IS_FAILED (convert_capture_transaction_to_json (job_session, json_result)))
-    {
-        goto error;
-    }
-
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILED;
+    return CTC_FAILED_CONVERT_TO_JSON_FORMAT;
 }
 
 int check_received_job_status (int job_status)

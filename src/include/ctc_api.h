@@ -21,36 +21,40 @@ enum ctc_job_close_condition
 
 enum ctc_error_code
 {
+    /* API error */
     CTC_FAILED                                = -1,
     CTC_FAILED_INVALID_ARGS                   = -2,
-    CTC_FAILED_INVALID_CONN_STRING            = -3,
+    CTC_FAILED_INVALID_CONNECTION_STRING      = -3,
     CTC_FAILED_ALLOC_CTC_HANDLE               = -4,
     CTC_FAILED_FREE_CTC_HANDLE                = -5,
     CTC_FAILED_INVALID_CTC_HANDLE             = -6,
     CTC_FAILED_ALLOC_JOB_DESC                 = -7,
     CTC_FAILED_FREE_JOB_DESC                  = -8,
     CTC_FAILED_INVALID_JOB_DESC               = -9,
-    CTC_FAILED_TOO_SMALL_RESULT_BUFFER_SIZE   = -10
+    CTC_FAILED_TOO_SMALL_RESULT_BUFFER_SIZE   = -10,
+    CTC_FAILED_CONVERT_TO_JSON_FORMAT         = -11,
 
+    /* network error */
     CTC_FAILED_OPEN_CONTROL_SESSION           = -100,
     CTC_FAILED_CLOSE_CONTROL_SESSION          = -101,
     CTC_FAILED_COMMUNICATE_CONTROL_SESSION    = -102,
     CTC_FAILED_OPEN_JOB_SESSION               = -103, 
     CTC_FAILED_CLOSE_JOB_SESSION              = -104,
     CTC_FAILED_COMMUNICATE_JOB_SESSION        = -105,
-    CTC_FAILED_POLL_TIMEOUT                   = -107,
-    CTC_FAILED_OVERFLOW_DATA_PAYLOAD          = -106,
-    CTC_FAILED_OVERFLOW_DATA_BUFFER           = -106,
+    CTC_FAILED_POLL_TIMEOUT                   = -106,
+    CTC_FAILED_OVERFLOW_DATA_PAYLOAD          = -107,
+    CTC_FAILED_OVERFLOW_DATA_BUFFER           = -108,
 
+    /* receive data error */
+    CTC_FAILED_RECEIVE_INVALID_OP_ID          = -200,
+    CTC_FAILED_RECEIVE_INVALID_JOB_DESC       = -201,
+    CTC_FAILED_RECEIVE_INVALID_SESSION_GID    = -202,
+    CTC_FAILED_RECEIVE_NOT_SUPPORTED_PROTOCOL = -203,
+    CTC_FAILED_RECEIVE_INVALID_STATUS         = -204,
 
-    CTC_FAILED_RECEIVE_INVALID_OP_ID          = -107,
-    CTC_FAILED_RECEIVE_INVALID_JOB_DESC       = -108,
-    CTC_FAILED_RECEIVE_INVALID_SESSION_GID    = -109,
-    CTC_FAILED_RECEIVE_NOT_SUPPORTED_PROTOCOL = -110,
-    CTC_FAILED_RECEIVE_INVALID_STATUS         = -111,
-
-    CTC_FAILED_CREATE_JOB_THREAD              = -200,
-    CTC_FAILED_DESTROY_JOB_THREAD             = -201,
+    /* job thread error */
+    CTC_FAILED_CREATE_JOB_THREAD              = -300,
+    CTC_FAILED_DESTROY_JOB_THREAD             = -301,
 };
 
 int ctc_open_connection (CTC_CONN_TYPE connection_type, char *connection_string);

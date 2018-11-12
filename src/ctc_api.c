@@ -94,8 +94,7 @@ int ctc_start_capture (int ctc_handle, int job_descriptor)
 
 int ctc_stop_capture (int ctc_handle, int job_descriptor, CTC_JOB_CLOSE_CONDITION close_condition)
 {
-    if (close_condition != CTC_JOB_CLOSE_IMMEDIATELY &&
-        close_condition != CTC_JOB_CLOSE_AFTER_TRANSACTION)
+    if (close_condition != CTC_JOB_CLOSE_IMMEDIATELY)
     {
         return CTC_FAILED_INVALID_ARGS;
     }

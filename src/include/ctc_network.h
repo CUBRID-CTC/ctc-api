@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include <jansson.h>
 #include "ctc_common.h"
 
 #define CTCP_MAJOR_VERSION 1
@@ -155,9 +156,10 @@ struct capture_data
     volatile int raw_data_buffer_w_idx;
     volatile int raw_data_buffer_r_idx;
 
-    volatile char *buffer_w_pos;
+    char *buffer_w_pos;
     char *buffer_r_pos;
 
+    volatile char *buffer_data_limit[CAPTURE_DATA_BUFFER_COUNT];
     int remaining_buffer_size;
 };
 
@@ -167,8 +169,6 @@ struct job_session
     int job_desc;
 
     int sockfd;
-
-    CTC_JOB_CLOSE_CONDITION job_close_condition;
 
     CAPTURE_DATA capture_data;
 
@@ -205,7 +205,7 @@ int request_register_table (CONTROL_SESSION *control_session, JOB_SESSION *job_s
 int request_unregister_table (CONTROL_SESSION *control_session, JOB_SESSION *job_session, char *user_name, char *table_name);
 int request_start_capture (CONTROL_SESSION *control_session, JOB_SESSION *job_session);
 int request_stop_capture (CONTROL_SESSION *control_session, JOB_SESSION *job_session, CTC_JOB_CLOSE_CONDITION job_close_condition);
-int read_capture_transaction_in_json (JOB_SESSION *job_session, JSON_RESULT *json_type_result);
 int request_job_status (CONTROL_SESSION *control_session, JOB_SESSION *job_session, int *job_status);
+int convert_capture_transaction_to_json (CAPTURE_DATA *capture_data, JSON_RESULT *json_result);
 
 #endif
