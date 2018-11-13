@@ -10,27 +10,21 @@ int ctc_open_connection (CTC_CONN_TYPE connection_type, char *connection_string)
     if (connection_type != CTC_CONN_TYPE_DEFAULT &&
         connection_type != CTC_CONN_TYPE_CTRL_ONLY)
     {
-        retval = CTC_FAILED_INVALID_ARGS;
-        goto error;
+        return CTC_FAILED_INVALID_ARGS;
     }
 
     if (IS_NULL (connection_string))
     {
-        retval = CTC_FAILED_INVALID_ARGS;
-        goto error;
+        return CTC_FAILED_INVALID_ARGS;
     }
 
     retval = open_connection (connection_type, connection_string, &ctc_handle);
     if (IS_FAILED (retval))
     {
-        goto error;
+        return retval;
     }
 
     return ctc_handle;
-
-error:
-
-    return retval;
 }
 
 int ctc_close_connection (int ctc_handle)
@@ -57,7 +51,7 @@ int ctc_delete_job (int ctc_handle, int job_descriptor)
     return delete_job (ctc_handle, job_descriptor);
 }
 
-int ctc_check_server_status (int ctc_handle, int *server_status)
+int ctc_check_server_status (int ctc_handle, CTC_SERVER_STATUS *server_status)
 {
     if (IS_NULL (server_status))
     {
@@ -112,7 +106,7 @@ int ctc_fetch_capture_transaction (int ctc_handle, int job_descriptor, char *res
     return fetch_capture_transaction (ctc_handle, job_descriptor, result_buffer, result_buffer_size, result_size);
 }
 
-int ctc_check_job_status (int ctc_handle, int job_descriptor, int *job_status)
+int ctc_check_job_status (int ctc_handle, int job_descriptor, CTC_JOB_STATUS *job_status)
 {
     if (IS_NULL (job_status))
     {

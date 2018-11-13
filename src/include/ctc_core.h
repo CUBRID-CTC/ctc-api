@@ -12,8 +12,6 @@ struct job_desc
     JOB_SESSION job_session;
 
     JSON_RESULT json_result;
-
-    json_t *json_array;
 };
 
 typedef struct ctc_handle CTC_HANDLE;
@@ -31,12 +29,12 @@ int open_connection (CTC_CONN_TYPE conn_type, char *url, int *ctc_handle_id);
 int close_connection (int ctc_handle_id);
 int add_job (int ctc_handle_id, int *job_desc_id);
 int delete_job (int ctc_handle_id, int job_desc_id);
-int check_server_status (int ctc_handle_id, int *server_status);
+int check_server_status (int ctc_handle_id, CTC_SERVER_STATUS *server_status);
 int register_table (int ctc_handle_id, int job_desc_id, char *user_name, char *table_name);
 int unregister_table (int ctc_handle_id, int job_desc_id, char *user_name, char *table_name);
 int start_capture (int ctc_handle_id, int job_desc_id);
 int stop_capture (int ctc_handle_id, int job_desc_id, CTC_JOB_CLOSE_CONDITION job_close_condition);
 int fetch_capture_transaction (int ctc_handle_id, int job_desc_id, char *buffer, int buffer_size, int *data_size);
-int check_job_status (int ctc_handle_id, int job_desc_id, int *job_status);
+int check_job_status (int ctc_handle_id, int job_desc_id, CTC_JOB_STATUS *job_status);
 
 #endif

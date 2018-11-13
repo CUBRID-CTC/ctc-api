@@ -14,7 +14,7 @@
 
 #define CTCP_PACKET_MAX_SIZE          (4096)
 #define CTCP_PACKET_HEADER_SIZE       (16)
-#define CTCP_MAX_DATA_PAYLOAD_SIZE    (CTCP_PACKET_MAX_SIZE - CTCP_PACKET_HEADER_SIZE)
+#define CTCP_DATA_PAYLOAD_MAX_SIZE    (CTCP_PACKET_MAX_SIZE - CTCP_PACKET_HEADER_SIZE)
 
 #define POLL_TIMEOUT                  (3000) /* msec */
 
@@ -98,22 +98,6 @@ enum ctc_stmt_type
     CTC_STMT_TYPE_COMMIT = 4
 };
 
-enum ctc_server_status
-{
-    CTC_SERVER_NOT_READY = 0,
-    CTC_SERVER_RUNNING   = 1,
-    CTC_SERVER_CLOSING   = 2
-};
-
-enum job_status
-{
-    CTC_JOB_NONE           = 0,
-    CTC_JOB_WAITING        = 1,
-    CTC_JOB_PROCESSING     = 2,
-    CTC_JOB_READY_TO_FETCH = 3,
-    CTC_JOB_CLOSING        = 4
-};
-
 typedef struct ctcp_header CTCP_HEADER;
 struct ctcp_header
 {
@@ -130,7 +114,7 @@ typedef struct ctcp CTCP;
 struct ctcp
 {
     CTCP_HEADER header;
-    char data_payload[CTCP_MAX_DATA_PAYLOAD_SIZE];
+    char data_payload[CTCP_DATA_PAYLOAD_MAX_SIZE];
 };
 
 typedef struct job_thread_args JOB_THREAD_ARGS;
@@ -143,15 +127,17 @@ struct job_thread_args
 typedef struct job_thread JOB_THREAD;
 struct job_thread
 {
+    volatile bool is_thr_alive;
+
     pthread_t thr_id;
     JOB_THREAD_ARGS thr_args;
-    int thr_retval;
+    volatile int thr_retval;
 };
 
 typedef struct capture_data CAPTURE_DATA;
 struct capture_data
 {
-    char *raw_data_buffer[CAPTURE_DATA_BUFFER_COUNT];
+    volatile char *raw_data_buffer[CAPTURE_DATA_BUFFER_COUNT];
 
     volatile int raw_data_buffer_w_idx;
     volatile int raw_data_buffer_r_idx;
@@ -173,7 +159,6 @@ struct job_session
     CAPTURE_DATA capture_data;
 
     JOB_THREAD job_thread;
-    bool is_alive_job_thread;
 };
 
 typedef struct control_session CONTROL_SESSION;
@@ -193,6 +178,8 @@ struct json_result
     json_t *json[JSON_ARRAY_SIZE];
     int json_read_idx;
     bool is_fragmented;
+
+    json_t *json_array;
 };
 
 int open_control_session (CONTROL_SESSION *control_session, CTC_CONN_TYPE conn_type);
@@ -200,12 +187,12 @@ int close_control_session (CONTROL_SESSION *control_session);
 int close_job_session_socket_only (JOB_SESSION *job_session);
 int open_job_session (CONTROL_SESSION *control_session, JOB_SESSION *job_session);
 int close_job_session (CONTROL_SESSION *control_session, JOB_SESSION *job_session);
-int request_server_status (CONTROL_SESSION *control_session, int *server_status);
+int request_server_status (CONTROL_SESSION *control_session, CTC_SERVER_STATUS *server_status);
 int request_register_table (CONTROL_SESSION *control_session, JOB_SESSION *job_session, char *user_name, char *table_name);
 int request_unregister_table (CONTROL_SESSION *control_session, JOB_SESSION *job_session, char *user_name, char *table_name);
 int request_start_capture (CONTROL_SESSION *control_session, JOB_SESSION *job_session);
 int request_stop_capture (CONTROL_SESSION *control_session, JOB_SESSION *job_session, CTC_JOB_CLOSE_CONDITION job_close_condition);
-int request_job_status (CONTROL_SESSION *control_session, JOB_SESSION *job_session, int *job_status);
+int request_job_status (CONTROL_SESSION *control_session, JOB_SESSION *job_session, CTC_JOB_STATUS *job_status);
 int convert_capture_transaction_to_json (CAPTURE_DATA *capture_data, JSON_RESULT *json_result);
 
 #endif
