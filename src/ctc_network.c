@@ -77,7 +77,7 @@ int send_ctcp (CTCP_OP_ID op_id, char op_param, CONTROL_SESSION *control_session
     CTCP ctcp;
 
     int data_payload_size = 0;
-    int data_size = 0;
+    int send_data_size = 0;
     int retval;
 
     retval = make_ctcp_header (op_id, op_param, control_session, job_session, header_data, &ctcp);
@@ -98,11 +98,11 @@ int send_ctcp (CTCP_OP_ID op_id, char op_param, CONTROL_SESSION *control_session
         data_payload_size = header_data;
     }
 
-    data_size = CTCP_PACKET_HEADER_SIZE + data_payload_size;
+    send_data_size = CTCP_PACKET_HEADER_SIZE + data_payload_size;
 
     if (op_id != CTCP_CREATE_JOB_SESSION)
     {
-        if (IS_FAILED (send_stream (control_session->sockfd, (char *)&ctcp, data_size)))
+        if (IS_FAILED (send_stream (control_session->sockfd, (char *)&ctcp, send_data_size)))
         {
             retval = CTC_FAILED_COMMUNICATE_CONTROL_SESSION;
             goto error;
@@ -110,7 +110,7 @@ int send_ctcp (CTCP_OP_ID op_id, char op_param, CONTROL_SESSION *control_session
     }
     else
     {
-        if (IS_FAILED (send_stream (job_session->sockfd, (char *)&ctcp.header, data_size)))
+        if (IS_FAILED (send_stream (job_session->sockfd, (char *)&ctcp.header, send_data_size)))
         {
             retval = CTC_FAILED_COMMUNICATE_JOB_SESSION;
             goto error;
@@ -627,20 +627,23 @@ error:
     return retval;
 }
 
-int close_job_session (CONTROL_SESSION *control_session, JOB_SESSION *job_session)
+int close_job_session (CONTROL_SESSION *control_session, JOB_SESSION *job_session, bool is_send_ctcp)
 {
     int retval;
 
-    retval = send_ctcp (CTCP_DESTROY_JOB_SESSION, 0, control_session, job_session, 0, NULL);
-    if (IS_FAILED (retval))
+    if (is_send_ctcp)
     {
-        goto error;
-    }
+        retval = send_ctcp (CTCP_DESTROY_JOB_SESSION, 0, control_session, job_session, 0, NULL);
+        if (IS_FAILED (retval))
+        {
+            goto error;
+        }
 
-    retval = recv_ctcp_header (CTCP_DESTROY_JOB_SESSION_RESULT, control_session, job_session, NULL, NULL);
-    if (IS_FAILED (retval))
-    {
-        goto error;
+        retval = recv_ctcp_header (CTCP_DESTROY_JOB_SESSION_RESULT, control_session, job_session, NULL, NULL);
+        if (IS_FAILED (retval))
+        {
+            goto error;
+        }
     }
 
     if (IS_FAILED (close (job_session->sockfd)))
@@ -656,22 +659,6 @@ error:
     close (job_session->sockfd);
 
     return retval;
-}
-
-int close_job_session_socket_only (JOB_SESSION *job_session)
-{
-    if (IS_FAILED (close (job_session->sockfd)))
-    {
-        goto error;
-    }
-
-    job_session->sockfd = -1;
-
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILED;
 }
 
 int request_server_status (CONTROL_SESSION *control_session, CTC_SERVER_STATUS *server_status)
@@ -813,7 +800,7 @@ void init_capture_data (CAPTURE_DATA *capture_data)
     capture_data->remaining_buffer_size = 0;
 }
 
-void clear_capture_data (CAPTURE_DATA *capture_data)
+void clean_capture_data (CAPTURE_DATA *capture_data)
 {
     int i;
 
@@ -908,9 +895,18 @@ error:
     return retval;
 }
 
+void set_next_write_pos (CAPTURE_DATA *capture_data, int write_size)
+{
+#if defined(DEBUG)
+    assert (capture_data->buffer_w_pos != NULL);
+#endif
+
+    capture_data->buffer_w_pos += write_size;
+    capture_data->buffer_data_limit[capture_data->raw_data_buffer_w_idx] = capture_data->buffer_w_pos;
+}
+
 int read_received_data (JOB_SESSION *job_session, char *buffer, int buffer_size, int data_size, char is_fragmented)
 {
-    CAPTURE_DATA *capture_data;
     int retval;
 
     /* data info */
@@ -926,11 +922,6 @@ int read_received_data (JOB_SESSION *job_session, char *buffer, int buffer_size,
     {
         return retval;
     }
-
-    capture_data = &job_session->capture_data;
-
-    capture_data->buffer_w_pos += buffer_size;
-    capture_data->buffer_data_limit[capture_data->raw_data_buffer_w_idx] = capture_data->buffer_w_pos;
 
     return CTC_SUCCESS;
 }
@@ -980,6 +971,8 @@ int read_received_capture_transaction (CONTROL_SESSION *control_session, JOB_SES
         {
             goto error;
         }
+
+        set_next_write_pos (&job_session->capture_data, need_buffer_size);
     }
 
     return CTC_SUCCESS;
@@ -1072,20 +1065,23 @@ error:
     return retval;
 }
 
-int request_stop_capture (CONTROL_SESSION *control_session, JOB_SESSION *job_session, CTC_JOB_CLOSE_CONDITION job_close_condition)
+int request_stop_capture (CONTROL_SESSION *control_session, JOB_SESSION *job_session, CTC_JOB_CLOSE_CONDITION job_close_condition, bool is_send_ctcp)
 {
     int retval;
 
-    retval = send_ctcp (CTCP_STOP_CAPTURE, job_close_condition, control_session, job_session, 0, NULL);
-    if (IS_FAILED (retval))
+    if (is_send_ctcp)
     {
-        goto error;
-    }
+        retval = send_ctcp (CTCP_STOP_CAPTURE, job_close_condition, control_session, job_session, 0, NULL);
+        if (IS_FAILED (retval))
+        {
+            goto error;
+        }
 
-    retval = recv_ctcp_header (CTCP_STOP_CAPTURE_RESULT, control_session, job_session, NULL, NULL);
-    if (IS_FAILED (retval))
-    {
-        goto error;
+        retval = recv_ctcp_header (CTCP_STOP_CAPTURE_RESULT, control_session, job_session, NULL, NULL);
+        if (IS_FAILED (retval))
+        {
+            goto error;
+        }
     }
 
     if (job_close_condition == CTC_JOB_CLOSE_IMMEDIATELY)
@@ -1096,7 +1092,7 @@ int request_stop_capture (CONTROL_SESSION *control_session, JOB_SESSION *job_ses
             goto error;
         }
 
-        clear_capture_data (&job_session->capture_data);
+        clean_capture_data (&job_session->capture_data);
     }
 
     return CTC_SUCCESS;
@@ -1105,14 +1101,14 @@ error:
 
     destroy_job_thread (job_session);
   
-    clear_capture_data (&job_session->capture_data);
+    clean_capture_data (&job_session->capture_data);
 
     return retval;
 }
 
 char *get_read_pos (CAPTURE_DATA *capture_data)
 {
-    char *read_pos = NULL;
+    volatile char *read_pos = NULL;
 
 #if defined(DEBUG)
     int try_count = 0;
@@ -1122,7 +1118,7 @@ char *get_read_pos (CAPTURE_DATA *capture_data)
     {
         if (IS_NULL (capture_data->buffer_r_pos))
         {
-            read_pos = (char *)capture_data->raw_data_buffer[capture_data->raw_data_buffer_r_idx];
+            read_pos = capture_data->raw_data_buffer[capture_data->raw_data_buffer_r_idx];
         }
         else
         {
@@ -1132,9 +1128,9 @@ char *get_read_pos (CAPTURE_DATA *capture_data)
         if (IS_NOT_NULL (read_pos) &&
             read_pos != capture_data->buffer_data_limit[capture_data->raw_data_buffer_r_idx])
         {
-            capture_data->buffer_r_pos = read_pos;
+            capture_data->buffer_r_pos = (char *)read_pos;
 
-            return read_pos;
+            return (char *)read_pos;
         }
         else
         {
@@ -1400,8 +1396,6 @@ int read_columns (char **read_pos_p, json_t *root)
 
     json_object_set_new (root, "Columns", columns);
 
-    json_decref (columns);
-
     *read_pos_p = read_pos;
 
     return CTC_SUCCESS;
@@ -1473,7 +1467,6 @@ int convert_capture_transaction_to_json (CAPTURE_DATA *capture_data, JSON_RESULT
     for (i = 0; i < number_of_items; i ++)
     {
         root = json_object ();
-
         if (IS_NULL (root))
         {
             retval = CTC_FAILED_JANSSON_EXTERNAL_LIBRARY;

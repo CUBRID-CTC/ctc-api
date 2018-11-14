@@ -179,19 +179,19 @@ struct json_result
     int json_read_idx;
     bool is_fragmented;
 
-    json_t *json_array;
+    json_t *result_array;
 };
 
 int open_control_session (CONTROL_SESSION *control_session, CTC_CONN_TYPE conn_type);
 int close_control_session (CONTROL_SESSION *control_session);
 int close_job_session_socket_only (JOB_SESSION *job_session);
 int open_job_session (CONTROL_SESSION *control_session, JOB_SESSION *job_session);
-int close_job_session (CONTROL_SESSION *control_session, JOB_SESSION *job_session);
+int close_job_session (CONTROL_SESSION *control_session, JOB_SESSION *job_session, bool is_send_ctcp);
 int request_server_status (CONTROL_SESSION *control_session, CTC_SERVER_STATUS *server_status);
 int request_register_table (CONTROL_SESSION *control_session, JOB_SESSION *job_session, char *user_name, char *table_name);
 int request_unregister_table (CONTROL_SESSION *control_session, JOB_SESSION *job_session, char *user_name, char *table_name);
 int request_start_capture (CONTROL_SESSION *control_session, JOB_SESSION *job_session);
-int request_stop_capture (CONTROL_SESSION *control_session, JOB_SESSION *job_session, CTC_JOB_CLOSE_CONDITION job_close_condition);
+int request_stop_capture (CONTROL_SESSION *control_session, JOB_SESSION *job_session, CTC_JOB_CLOSE_CONDITION job_close_condition, bool is_send_ctcp);
 int request_job_status (CONTROL_SESSION *control_session, JOB_SESSION *job_session, CTC_JOB_STATUS *job_status);
 int convert_capture_transaction_to_json (CAPTURE_DATA *capture_data, JSON_RESULT *json_result);
 
