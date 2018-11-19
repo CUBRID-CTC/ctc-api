@@ -193,6 +193,6 @@ int request_unregister_table (CONTROL_SESSION *control_session, JOB_SESSION *job
 int request_start_capture (CONTROL_SESSION *control_session, JOB_SESSION *job_session);
 int request_stop_capture (CONTROL_SESSION *control_session, JOB_SESSION *job_session, CTC_JOB_CLOSE_CONDITION job_close_condition, bool is_send_ctcp);
 int request_job_status (CONTROL_SESSION *control_session, JOB_SESSION *job_session, CTC_JOB_STATUS *job_status);
-int convert_capture_transaction_to_json (CAPTURE_DATA *capture_data, JSON_RESULT *json_result);
+int convert_capture_transaction_to_json (CAPTURE_DATA *capture_data, JSON_RESULT *json_result, JOB_THREAD* job_thread);
 
 #endif

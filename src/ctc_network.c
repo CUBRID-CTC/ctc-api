@@ -800,7 +800,7 @@ void init_capture_data (CAPTURE_DATA *capture_data)
     capture_data->remaining_buffer_size = 0;
 }
 
-void clean_capture_data (CAPTURE_DATA *capture_data)
+void clear_capture_data (CAPTURE_DATA *capture_data)
 {
     int i;
 
@@ -1012,19 +1012,32 @@ int create_job_thread (CONTROL_SESSION *control_session, JOB_SESSION *job_sessio
     return CTC_SUCCESS;
 }
 
-int destroy_job_thread (JOB_SESSION *job_session)
+int destroy_job_thread (JOB_THREAD *job_thread)
 {
-    if (job_session->job_thread.is_thr_alive == true)
+    if (job_thread->is_thr_alive == true)
     {
-        job_session->job_thread.is_thr_alive = false;
+        job_thread->is_thr_alive = false;
 
-        if (IS_FAILED (pthread_join (job_session->job_thread.thr_id, NULL)))
+        if (IS_FAILED (pthread_join (job_thread->thr_id, NULL)))
         {
             return CTC_FAILED_DESTROY_JOB_THREAD;
         }
     }
 
-    return job_session->job_thread.thr_retval;
+    return job_thread->thr_retval;
+}
+
+int check_job_thread_status (JOB_THREAD *job_thread)
+{
+    if (job_thread->is_thr_alive == true &&
+        job_thread->thr_retval == CTC_SUCCESS)
+    {
+        return CTC_SUCCESS;
+    }
+    else
+    {
+        return job_thread->thr_retval;
+    }
 }
 
 int request_start_capture (CONTROL_SESSION *control_session, JOB_SESSION *job_session)
@@ -1059,7 +1072,7 @@ error:
 
     if (state)
     {
-        destroy_job_thread (job_session);
+        destroy_job_thread (&job_session->job_thread);
     }
 
     return retval;
@@ -1086,22 +1099,22 @@ int request_stop_capture (CONTROL_SESSION *control_session, JOB_SESSION *job_ses
 
     if (job_close_condition == CTC_JOB_CLOSE_IMMEDIATELY)
     {
-        retval = destroy_job_thread (job_session);
+        retval = destroy_job_thread (&job_session->job_thread);
         if (IS_FAILED (retval))
         {
             goto error;
         }
 
-        clean_capture_data (&job_session->capture_data);
+        clear_capture_data (&job_session->capture_data);
     }
 
     return CTC_SUCCESS;
 
 error:
 
-    destroy_job_thread (job_session);
+    destroy_job_thread (&job_session->job_thread);
   
-    clean_capture_data (&job_session->capture_data);
+    clear_capture_data (&job_session->capture_data);
 
     return retval;
 }
@@ -1413,7 +1426,7 @@ int register_json (JSON_RESULT *json_result, int register_idx, json_t *json)
     return CTC_SUCCESS;
 }
 
-int convert_capture_transaction_to_json (CAPTURE_DATA *capture_data, JSON_RESULT *json_result)
+int convert_capture_transaction_to_json (CAPTURE_DATA *capture_data, JSON_RESULT *json_result, JOB_THREAD *job_thread)
 {
     char *read_pos = NULL;
     int data_size;
@@ -1425,6 +1438,12 @@ int convert_capture_transaction_to_json (CAPTURE_DATA *capture_data, JSON_RESULT
     json_t *root;
 
     int retval;
+
+    retval = check_job_thread_status (job_thread);
+    if (IS_FAILED (retval))
+    {
+        goto error;
+    }
 
     read_pos = get_read_pos (capture_data);
     if (IS_NULL (read_pos))

@@ -55,16 +55,16 @@ void free_job_desc (JOB_DESC *job_desc)
         (void)request_stop_capture (NULL, &job_desc->job_session, CTC_JOB_CLOSE_IMMEDIATELY, false);
     }
 
-    if (job_desc->job_session.job_desc != INITIAL_JOB_DESC)
-    {
-        (void)close_job_session (NULL, &job_desc->job_session, false); // 정상 루틴 수행시 close (socket) 여러번
-        job_desc->job_session.job_desc = INITIAL_JOB_DESC;
-    }
-
     if (IS_NOT_NULL (job_desc->json_result.result_array))
     {
         json_decref (job_desc->json_result.result_array);
         job_desc->json_result.result_array = NULL;
+    }
+
+    if (job_desc->job_session.job_desc != INITIAL_JOB_DESC)
+    {
+        (void)close_job_session (NULL, &job_desc->job_session, false); // 정상 루틴 수행시 close (socket) 여러번
+        job_desc->job_session.job_desc = INITIAL_JOB_DESC;
     }
 }
 
@@ -452,11 +452,16 @@ int init_json_result (JSON_RESULT *json_result)
     return CTC_SUCCESS;
 }
 
-void clean_json_result (JSON_RESULT *json_result, bool is_free_result_array)
+void clear_json_result_array (JSON_RESULT *json_result)
+{
+    json_array_clear (json_result->result_array);
+}
+
+void clear_json_result (JSON_RESULT *json_result, bool is_free_result_array)
 {
     int i;
 
-    for (i = 0; i < JSON_ARRAY_SIZE; i ++) // read_idx == 0 인 경우 수행할 필요 없다. 다 안읽고 종료하는 경우에 대한 방어코드
+    for (i = 0; i < JSON_ARRAY_SIZE; i ++)
     {
         if (IS_NOT_NULL (json_result->json[i]))
         {
@@ -475,7 +480,7 @@ void clean_json_result (JSON_RESULT *json_result, bool is_free_result_array)
     }
     else
     {
-        json_array_clear (json_result->result_array);
+        clear_json_result_array (json_result);
     }
 }
 
@@ -540,7 +545,7 @@ int stop_capture (int ctc_handle_id, int job_desc_id, CTC_JOB_CLOSE_CONDITION jo
         goto error;
     }
 
-    clean_json_result (&job_desc->json_result, true);
+    clear_json_result (&job_desc->json_result, true);
 
     return CTC_SUCCESS;
 
@@ -643,8 +648,7 @@ int fetch_capture_transaction (int ctc_handle_id, int job_desc_id, char *buffer,
         goto error;
     }
 
-    // job thread가 비정상 종료했는지 검사
-    json_array_clear (job_desc->json_result.result_array); // fetch가 호출될 때마다 버퍼 clear 필요
+    clear_json_result_array (&job_desc->json_result);
 
     retval = read_json (job_desc, buffer, buffer_size, data_size);
     if (IS_FAILED (retval))
@@ -655,9 +659,9 @@ int fetch_capture_transaction (int ctc_handle_id, int job_desc_id, char *buffer,
     {
         if (retval == CTC_SUCCESS_NO_DATA)
         {
-            clean_json_result (&job_desc->json_result, false);
+            clear_json_result (&job_desc->json_result, false);
 
-            retval = convert_capture_transaction_to_json (&job_desc->job_session.capture_data, &job_desc->json_result);
+            retval = convert_capture_transaction_to_json (&job_desc->job_session.capture_data, &job_desc->json_result, &job_desc->job_session.job_thread);
             if (IS_FAILED (retval))
             {
                 goto error;
