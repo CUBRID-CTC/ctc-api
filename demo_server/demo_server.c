@@ -527,7 +527,7 @@ int send_captured_data (JOB* job)
 
         memcpy (ctcp.data_payload, data_payload, 4004);
 
-        if (-1 == write (job->job_sockfd, &ctcp, sizeof (ctcp)))
+        if (-1 == write (job->job_sockfd, &ctcp, 16 + 4004))
         {
             PRINT_ERR_LOG ();
             goto error;
