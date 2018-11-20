@@ -24,21 +24,26 @@ enum ctcp_operation_id
     CTCP_DESTROY_CONTROL_SESSION        = 0x03,
     CTCP_DESTROY_CONTROL_SESSION_RESULT = 0x04,
     CTCP_CREATE_JOB_SESSION             = 0x05,
+
     CTCP_CREATE_JOB_SESSION_RESULT      = 0x06,
     CTCP_DESTROY_JOB_SESSION            = 0x07,
     CTCP_DESTROY_JOB_SESSION_RESULT     = 0x08,
     CTCP_REQUEST_JOB_STATUS             = 0x09,
     CTCP_REQUEST_JOB_STATUS_RESULT      = 0x0A,
+
     CTCP_REQUEST_SERVER_STATUS          = 0x0B,
     CTCP_REQUEST_SERVER_STATUS_RESULT   = 0x0C,
     CTCP_REGISTER_TABLE                 = 0x0D,
     CTCP_REGISTER_TABLE_RESULT          = 0x0E,
     CTCP_UNREGISTER_TABLE               = 0x0F,
+
     CTCP_UNREGISTER_TABLE_RESULT        = 0x10,
     CTCP_SET_JOB_ATTRIBUTE              = 0x11,
     CTCP_SET_JOB_ATTRIBUTE_RESULT       = 0x12,
-    CTCP_START_CAPTURE                  = 0x81,
-    CTCP_START_CAPTURE_RESULT           = 0x82,
+    CTCP_START_CAPTURE                  = 0x80,
+    CTCP_START_CAPTURE_RESULT           = 0x81,
+
+    CTCP_CAPTURED_DATA_RESULT           = 0x82,
     CTCP_STOP_CAPTURE                   = 0x83,
     CTCP_STOP_CAPTURE_RESULT            = 0x84
 };
@@ -147,16 +152,15 @@ struct item
 {
     // 총 크기 100
     int tx_id;
-    int lsa;
     int user_name_len; // 4로 고정
     char user_name[4]; // "dba1"로 고정
     int table_name_len; // 4로 고정
     char table_name[4]; // "tbl1"로 고정
 
 
-    short stmt_type; // 1, insert 로 고정
+    int stmt_type; // 1, insert 로 고정
 
-    short attr_num;  // 3개
+    int attr_num;  // 3개
 
     int attr_name_len_1; // 8
     char attr_name_1[8]; // "c1111117" 으로 고정

@@ -257,6 +257,11 @@ int process_control_session_request (SESSION_GROUP *session_group, bool *is_fini
     retval = read (session_group->ctrl_sockfd, &ctcp_header, sizeof (ctcp_header));
     if (retval == -1 || retval < sizeof (ctcp_header))
     {
+        if (retval == 0)
+        {
+            return 0;
+        }
+
         PRINT_ERR_LOG ();
         goto error;
     }
@@ -453,7 +458,6 @@ int make_data_payload (void)
     int i;
 
     item.tx_id = 777;
-    item.lsa = 888;
 
     item.user_name_len = 4;
     memcpy (item.user_name, "dba1", 4);
@@ -502,7 +506,7 @@ int send_captured_data (JOB* job)
 
     while (packet_send_count)
     {
-        ctcp_header_result->op_id = CTCP_START_CAPTURE_RESULT;
+        ctcp_header_result->op_id = CTCP_CAPTURED_DATA_RESULT;
 
         if (packet_send_count == 1) // 전송 packet이 하나 남았으면
         {
@@ -523,16 +527,18 @@ int send_captured_data (JOB* job)
 
         memcpy (ctcp.data_payload, data_payload, 4004);
 
-        if (-1 == write (job->job_sockfd, &ctcp, sizeof (ctcp)))
+        if (-1 == write (job->job_sockfd, &ctcp, 16 + 4004))
         {
             PRINT_ERR_LOG ();
             goto error;
         }
 
-        printf("[send (%d)] [session_gid: %d, job_desc: %d] CTCP_START_CAPTURE_RESULT\n", send_count++, job->session_gid, job->job_desc);
+        printf("[send (%d)] [session_gid: %d, job_desc: %d] CTCP_CAPTURED_DATA_RESULT\n", send_count++, job->session_gid, job->job_desc);
 
         packet_send_count --;
     }
+
+    printf ("\t\t[Total send count at once] ==> %d\n", send_count - 1);
 
     return 0;
 
@@ -1484,6 +1490,24 @@ int process_START_CAPTURE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_grou
     }
 
     // send CTCP_START_CAPTURE_RESULT
+    ctcp_header_result.op_id = CTCP_START_CAPTURE_RESULT;
+    ctcp_header_result.op_param_or_result_code = CTC_RC_SUCCESS;
+    ctcp_header_result.job_desc = job->job_desc;
+    ctcp_header_result.session_gid = session_group->session_gid;
+
+    make_version_info (&ctcp_header_result);
+
+    ctcp_header_result.header_data = 0;
+
+    if (-1 == write (session_group->ctrl_sockfd, &ctcp_header_result, sizeof (ctcp_header_result)))
+    {
+        PRINT_ERR_LOG ();
+        goto error;
+    }
+
+    printf ("[send] CTCP_START_CAPTURE_RESULT\n");
+
+    // send CTCP_START_CAPTURE_RESULT
     // 이 놈의 경우 job_thread에서 보내준다.
 
     // capture data를 전송하는 job 쓰레드 생성
@@ -1497,8 +1521,8 @@ int process_START_CAPTURE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_grou
 
 error:
 
-    // send CTCP_STOP_CAPTURE_RESULT with error
-    ctcp_header_result.op_id = CTCP_STOP_CAPTURE_RESULT;
+    // send CTCP_START_CAPTURE_RESULT with error
+    ctcp_header_result.op_id = CTCP_START_CAPTURE_RESULT;
     ctcp_header_result.op_param_or_result_code = CTC_RC_FAILED_INVALID_HANDLE;
     ctcp_header_result.job_desc = ctcp_header->job_desc;
     ctcp_header_result.session_gid = ctcp_header->session_gid;
@@ -1521,7 +1545,7 @@ int process_STOP_CAPTURE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_group
 
     void *status;
 
-    if (ctcp_header->op_param_or_result_code != CTC_QUIT_JOB_IMMEDIATELY ||
+    if (ctcp_header->op_param_or_result_code != CTC_QUIT_JOB_IMMEDIATELY &&
         ctcp_header->op_param_or_result_code != CTC_QUIT_JOB_AFTER_TRANSACTION)
     {
         PRINT_ERR_LOG ();
@@ -1567,7 +1591,7 @@ int process_STOP_CAPTURE (CTCP_HEADER *ctcp_header, SESSION_GROUP *session_group
     // send CTCP_STOP_CAPTURE_RESULT
     ctcp_header_result.op_id = CTCP_STOP_CAPTURE_RESULT;
     ctcp_header_result.op_param_or_result_code = CTC_RC_SUCCESS;
-    ctcp_header_result.job_desc = 0;
+    ctcp_header_result.job_desc = job->job_desc;
     ctcp_header_result.session_gid = session_group->session_gid;
 
     make_version_info (&ctcp_header_result);

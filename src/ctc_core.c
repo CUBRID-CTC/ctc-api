@@ -1,39 +1,85 @@
-#include <stdlib.h>
 #include <regex.h>
 #include "ctc_core.h"
 
 pthread_once_t ctc_api_once_init = PTHREAD_ONCE_INIT;
 
-CTC_HANDLE ctc_pool[MAX_CTC_HANDLE_COUNT];
+CTC_HANDLE ctc_handle_pool[CTC_HANDLE_MAX_COUNT];
 
 void ctc_api_init (void)
 {
     int i, j;
 
-    for (i = 0; i < MAX_CTC_HANDLE_COUNT; i ++)
+    for (i = 0; i < CTC_HANDLE_MAX_COUNT; i ++)
     {
-        ctc_pool[i].ID = i;
-        ctc_pool[i].control_session.session_gid = -1;
+        ctc_handle_pool[i].control_session.session_gid = INITIAL_SESSION_GID;
 
-        for (j = 0; j < MAX_JOB_HANDLE_COUNT; j ++)
+        for (j = 0; j < JOB_DESC_MAX_COUNT; j ++)
         {
-            ctc_pool[i].job_pool[j].ID = j;
-            ctc_pool[i].job_pool[j].job_session.job_desc = -1;
+            ctc_handle_pool[i].job_desc_pool[j].job_session.job_desc = INITIAL_JOB_DESC;
+            ctc_handle_pool[i].job_desc_pool[j].job_session.job_thread.is_thr_alive = false;
+
+            ctc_handle_pool[i].job_desc_pool[j].json_result.result_array = NULL;
         }
     }
 }
 
-int alloc_ctc_handle (CTC_HANDLE **ctc_handle_p)
+int alloc_job_desc (CTC_HANDLE *ctc_handle, JOB_DESC **job_desc_p, int *job_desc_id)
+{
+    int i;
+
+    *job_desc_p = NULL;
+
+    for (i = 0; i < JOB_DESC_MAX_COUNT; i ++)
+    {
+        if (ctc_handle->job_desc_pool[i].job_session.job_desc == INITIAL_JOB_DESC)
+        {
+            *job_desc_p  = &ctc_handle->job_desc_pool[i];
+            *job_desc_id = i;
+
+            break;
+        }
+    }
+
+    if (IS_NULL (*job_desc_p))
+    {
+        return CTC_FAILED_ALLOC_JOB_DESC;
+    }
+
+    return CTC_SUCCESS;
+}
+
+void free_job_desc (JOB_DESC *job_desc)
+{
+    if (job_desc->job_session.job_thread.is_thr_alive == true)
+    {
+        (void)request_stop_capture (NULL, &job_desc->job_session, CTC_JOB_CLOSE_IMMEDIATELY, false);
+    }
+
+    if (IS_NOT_NULL (job_desc->json_result.result_array))
+    {
+        json_decref (job_desc->json_result.result_array);
+        job_desc->json_result.result_array = NULL;
+    }
+
+    if (job_desc->job_session.job_desc != INITIAL_JOB_DESC)
+    {
+        (void)close_job_session (NULL, &job_desc->job_session, false); // 정상 루틴 수행시 close (socket) 여러번
+        job_desc->job_session.job_desc = INITIAL_JOB_DESC;
+    }
+}
+
+int alloc_ctc_handle (CTC_HANDLE **ctc_handle_p, int *ctc_handle_id)
 {
     int i;
 
     *ctc_handle_p = NULL;
 
-    for (i = 0; i < MAX_CTC_HANDLE_COUNT; i ++)
+    for (i = 0; i < CTC_HANDLE_MAX_COUNT; i ++)
     {
-        if (ctc_pool[i].control_session.session_gid == -1)
+        if (ctc_handle_pool[i].control_session.session_gid == INITIAL_SESSION_GID)
         {
-            *ctc_handle_p = &ctc_pool[i];
+            *ctc_handle_p  = &ctc_handle_pool[i];
+            *ctc_handle_id = i;
             
             break;
         }
@@ -41,113 +87,83 @@ int alloc_ctc_handle (CTC_HANDLE **ctc_handle_p)
 
     if (IS_NULL (*ctc_handle_p))
     {
-        goto error;
+        return CTC_FAILED_ALLOC_CTC_HANDLE;
     }
 
     return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILURE;
 }
 
-int free_ctc_handle (CTC_HANDLE *ctc_handle)
-{
-    // 소켓 정리, 할당된 job 정리
-
-    ctc_handle->control_session.session_gid = -1;
-
-    return CTC_SUCCESS;
-}
-
-int alloc_job_handle (CTC_HANDLE *ctc_handle, JOB_HANDLE **job_handle_p)
+void free_ctc_handle (CTC_HANDLE *ctc_handle)
 {
     int i;
 
-    *job_handle_p = NULL;
-
-    for (i = 0; i < MAX_JOB_HANDLE_COUNT; i ++)
+    for (i = 0; i < JOB_DESC_MAX_COUNT; i ++)
     {
-        if (ctc_handle->job_pool[i].job_session.job_desc == -1)
-        {
-            *job_handle_p = &ctc_handle->job_pool[i];
-            
-            break;
-        }
+        free_job_desc (&ctc_handle->job_desc_pool[i]);
     }
 
-    if (IS_NULL (*job_handle_p))
-    {
-        goto error;
-    }
-
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILURE;
-}
-
-int free_job_handle (JOB_HANDLE *job_handle)
-{
-    job_handle->job_session.job_desc = -1;
-
-    return CTC_SUCCESS;
+    ctc_handle->control_session.session_gid = INITIAL_SESSION_GID;
 }
 
 int find_ctc_handle (int ctc_handle_id, CTC_HANDLE **ctc_handle_p)
 {
     CTC_HANDLE *ctc_handle;
 
-    ctc_handle = &ctc_pool[ctc_handle_id];
-
-    if (ctc_handle->control_session.session_gid == -1)
+    if (ctc_handle_id < 0 || ctc_handle_id >= CTC_HANDLE_MAX_COUNT)
     {
-        goto error;
+        return CTC_FAILED_INVALID_CTC_HANDLE;
+    }
+
+    ctc_handle = &ctc_handle_pool[ctc_handle_id];
+
+    if (ctc_handle->control_session.session_gid == INITIAL_SESSION_GID)
+    {
+        return CTC_FAILED_INVALID_CTC_HANDLE;
     }
 
     *ctc_handle_p = ctc_handle;
 
     return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILURE;
 }
 
-int find_job_handle (CTC_HANDLE *ctc_handle, int job_handle_id, JOB_HANDLE **job_handle_p)
+int find_job_desc (CTC_HANDLE *ctc_handle, int job_desc_id, JOB_DESC **job_desc_p)
 {
-    JOB_HANDLE *job_handle;
+    JOB_DESC *job_desc;
 
-    job_handle = &ctc_handle->job_pool[job_handle_id];
-
-    if (job_handle->job_session.job_desc == -1)
+    if (job_desc_id < 0 || job_desc_id >= JOB_DESC_MAX_COUNT)
     {
-        goto error;
+        return CTC_FAILED_INVALID_JOB_DESC;
     }
 
-    *job_handle_p = job_handle;
+    job_desc = &ctc_handle->job_desc_pool[job_desc_id];
+
+    if (job_desc->job_session.job_desc == INITIAL_JOB_DESC)
+    {
+        return CTC_FAILED_INVALID_JOB_DESC;
+    }
+
+    *job_desc_p = job_desc;
 
     return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILURE;
 }
 
-int validate_url (char *url, CTC_HANDLE *ctc_handle)
+int parse_url (char *url, CTC_HANDLE *ctc_handle)
 {
     char *url_pattern = "^[[:blank:]]*ctc:cubrid:([[:digit:]]{1,3}.[[:digit:]]{1,3}.[[:digit:]]{1,3}.[[:digit:]]{1,3}):([[:digit:]]{1,5})[[:blank:]]*$";
 
     regex_t reg;
     regmatch_t match[3];
 
-    if (IS_FAILURE (regcomp (&reg, url_pattern, REG_ICASE | REG_EXTENDED)))
+    int state = 0;
+
+    if (IS_FAILED (regcomp (&reg, url_pattern, REG_ICASE | REG_EXTENDED)))
     {
         goto error;
     }
 
-    if (IS_FAILURE (regexec (&reg, url, 3, match, 0)))
+    state = 1;
+
+    if (IS_FAILED (regexec (&reg, url, 3, match, 0)))
     {
         goto error;
     }
@@ -165,165 +181,183 @@ int validate_url (char *url, CTC_HANDLE *ctc_handle)
 
 error:
 
-    return CTC_FAILURE;
+    if (state)
+    {
+        regfree (&reg);
+    }
+
+    return CTC_FAILED_INVALID_CONNECTION_STRING;
 }
 
-int connect_server (int conn_type, char *url, int *ctc_handle_id)
+int open_connection (CTC_CONN_TYPE conn_type, char *url, int *ctc_handle_id)
 {
     CTC_HANDLE *ctc_handle;
+    int retval;
 
     int state = 0;
 
-    if (IS_FAILURE (alloc_ctc_handle (&ctc_handle)))
+    retval = alloc_ctc_handle (&ctc_handle, ctc_handle_id);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
     state = 1;
 
-    if (IS_FAILURE (validate_url (url, ctc_handle)))
+    retval = parse_url (url, ctc_handle);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
-    if (IS_FAILURE (open_control_session (&ctc_handle->control_session, conn_type)))
+    retval = open_control_session (&ctc_handle->control_session, conn_type);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
-
-    state = 2;
-
-    *ctc_handle_id = ctc_handle->ID;
 
     return CTC_SUCCESS;
 
 error:
 
-    switch (state)
+    if (state)
     {
-        case 2:
-            close_control_session (&ctc_handle->control_session);
-        case 1:
-            free_ctc_handle (ctc_handle);
-        default:
-            break;
+        free_ctc_handle (ctc_handle);
     }
 
-    return CTC_FAILURE;
+    return retval;
 }
 
-int disconnect_server (int ctc_handle_id)
+int close_connection (int ctc_handle_id)
 {
     CTC_HANDLE *ctc_handle;
+    int retval;
 
     int state = 0;
 
-    if (IS_FAILURE (find_ctc_handle (ctc_handle_id, &ctc_handle)))
+    retval = find_ctc_handle (ctc_handle_id, &ctc_handle);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
     state = 1;
 
-    if (IS_FAILURE (close_control_session (&ctc_handle->control_session)))
+    retval = close_control_session (&ctc_handle->control_session);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
-    state = 2;
-
-    if (IS_FAILURE (free_ctc_handle (ctc_handle)))
-    {
-        goto error;
-    }
+    free_ctc_handle (ctc_handle);
 
     return CTC_SUCCESS;
 
 error:
 
-    switch (state)
+    if (state)
     {
-        case 1:
-            close_control_session (&ctc_handle->control_session);
-        case 2:
-            free_ctc_handle (ctc_handle);
-        default:
-            break;
+        free_ctc_handle (ctc_handle);
     }
 
-    return CTC_FAILURE;
+    return retval;
 }
 
-int add_job (int ctc_handle_id)
+int add_job (int ctc_handle_id, int *job_desc_id)
 {
     CTC_HANDLE *ctc_handle;
-    JOB_HANDLE *job_handle;
+    JOB_DESC *job_desc;
+    int retval;
 
     int state = 0;
 
-    if (IS_FAILURE (find_ctc_handle (ctc_handle_id, &ctc_handle)))
+    retval = find_ctc_handle (ctc_handle_id, &ctc_handle);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
-    if (IS_FAILURE (alloc_job_handle (ctc_handle, &job_handle)))
+    retval = alloc_job_desc (ctc_handle, &job_desc, job_desc_id);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
     state = 1;
 
-    if (IS_FAILURE (open_job_session (&ctc_handle->control_session, &job_handle->job_session)))
+    retval = open_job_session (&ctc_handle->control_session, &job_desc->job_session);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
-
-    state = 2;
 
     return CTC_SUCCESS;
 
 error:
 
-    switch (state)
+    if (state)
     {
-        case 2:
-            close_job_session (&ctc_handle->control_session, &job_handle->job_session);
-        case 1:
-            free_job_handle (job_handle);
-        default:
-            break;
+        free_job_desc (job_desc);
     }
 
-    return CTC_FAILURE;
+    return retval;
 }
 
-int delete_job (int ctc_handle_id, int job_handle_id)
+int delete_job (int ctc_handle_id, int job_desc_id)
 {
     CTC_HANDLE *ctc_handle;
-    JOB_HANDLE *job_handle;
+    JOB_DESC *job_desc;
+    int retval;
 
     int state = 0;
 
-    if (IS_FAILURE (find_ctc_handle (ctc_handle_id, &ctc_handle)))
+    retval = find_ctc_handle (ctc_handle_id, &ctc_handle);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
-    if (IS_FAILURE (find_job_handle (ctc_handle, job_handle_id, &job_handle)))
+    retval = find_job_desc (ctc_handle, job_desc_id, &job_desc);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
     state = 1;
 
-    if (IS_FAILURE (close_job_session (&ctc_handle->control_session, &job_handle->job_session)))
+    retval = close_job_session (&ctc_handle->control_session, &job_desc->job_session, true);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
-    state = 2;
+    free_job_desc (job_desc);
 
-    if (IS_FAILURE (free_job_handle (job_handle)))
+    return CTC_SUCCESS;
+
+error:
+
+    if (state)
+    {
+        free_job_desc (job_desc);
+    }
+
+    return retval;
+}
+
+int check_server_status (int ctc_handle_id, CTC_SERVER_STATUS *server_status)
+{
+    CTC_HANDLE *ctc_handle;
+    int retval;
+
+    retval = find_ctc_handle (ctc_handle_id, &ctc_handle);
+    if (IS_FAILED (retval))
+    {
+        goto error;
+    }
+
+    retval = request_server_status (&ctc_handle->control_session, server_status);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
@@ -332,29 +366,343 @@ int delete_job (int ctc_handle_id, int job_handle_id)
 
 error:
 
-    switch (state)
+    return retval;
+}
+
+int register_table (int ctc_handle_id, int job_desc_id, char *user_name, char *table_name)
+{
+    CTC_HANDLE *ctc_handle;
+    JOB_DESC *job_desc;
+    int retval;
+
+    retval = find_ctc_handle (ctc_handle_id, &ctc_handle);
+    if (IS_FAILED (retval))
     {
-        case 1:
-            close_job_session (&ctc_handle->control_session, &job_handle->job_session);
-        case 2:
-            free_job_handle (job_handle);
-        default:
+        goto error;
+    }
+
+    retval = find_job_desc (ctc_handle, job_desc_id, &job_desc);
+    if (IS_FAILED (retval))
+    {
+        goto error;
+    }
+
+    retval = request_register_table (&ctc_handle->control_session, &job_desc->job_session, user_name, table_name);
+    if (IS_FAILED (retval))
+    {
+        goto error;
+    }
+
+    return CTC_SUCCESS;
+
+error:
+
+    return retval;
+}
+
+int unregister_table (int ctc_handle_id, int job_desc_id, char *user_name, char *table_name)
+{
+    CTC_HANDLE *ctc_handle;
+    JOB_DESC *job_desc;
+    int retval;
+
+    retval = find_ctc_handle (ctc_handle_id, &ctc_handle);
+    if (IS_FAILED (retval))
+    {
+        goto error;
+    }
+
+    retval = find_job_desc (ctc_handle, job_desc_id, &job_desc);
+    if (IS_FAILED (retval))
+    {
+        goto error;
+    }
+
+    retval = request_unregister_table (&ctc_handle->control_session, &job_desc->job_session, user_name, table_name);
+    if (IS_FAILED (retval))
+    {
+        goto error;
+    }
+
+    return CTC_SUCCESS;
+
+error:
+
+    return retval;
+}
+
+int init_json_result (JSON_RESULT *json_result)
+{
+    int i;
+
+    for (i = 0; i < JSON_ARRAY_SIZE; i ++)
+    {
+        json_result->json[i] = NULL;
+    }
+
+    json_result->json_read_idx = 0;
+    json_result->is_fragmented = false;
+
+    json_result->result_array = json_array ();
+    if (IS_NULL (json_result->result_array))
+    {
+        return CTC_FAILED_JANSSON_EXTERNAL_LIBRARY;
+    }
+
+    return CTC_SUCCESS;
+}
+
+void clear_json_result_array (JSON_RESULT *json_result)
+{
+    json_array_clear (json_result->result_array);
+}
+
+void clear_json_result (JSON_RESULT *json_result, bool is_free_result_array)
+{
+    int i;
+
+    for (i = 0; i < JSON_ARRAY_SIZE; i ++)
+    {
+        if (IS_NOT_NULL (json_result->json[i]))
+        {
+            json_decref (json_result->json[i]);
+            json_result->json[i] = NULL;
+        }
+    }
+
+    json_result->json_read_idx = 0;
+    json_result->is_fragmented = false;
+
+    if (is_free_result_array)
+    {
+        json_decref (json_result->result_array);
+        json_result->result_array = NULL;
+    }
+    else
+    {
+        clear_json_result_array (json_result);
+    }
+}
+
+int start_capture (int ctc_handle_id, int job_desc_id)
+{
+    CTC_HANDLE *ctc_handle;
+    JOB_DESC *job_desc;
+    int retval;
+
+    retval = find_ctc_handle (ctc_handle_id, &ctc_handle);
+    if (IS_FAILED (retval))
+    {
+        goto error;
+    }
+
+    retval = find_job_desc (ctc_handle, job_desc_id, &job_desc);
+    if (IS_FAILED (retval))
+    {
+        goto error;
+    }
+
+    retval = request_start_capture (&ctc_handle->control_session, &job_desc->job_session);
+    if (IS_FAILED (retval))
+    {
+        goto error;
+    }
+
+    retval = init_json_result (&job_desc->json_result);
+    if (IS_FAILED (retval))
+    {
+        goto error;
+    }
+
+    return CTC_SUCCESS;
+
+error:
+
+    return retval;
+}
+
+int stop_capture (int ctc_handle_id, int job_desc_id, CTC_JOB_CLOSE_CONDITION job_close_condition)
+{
+    CTC_HANDLE *ctc_handle;
+    JOB_DESC *job_desc;
+    int retval;
+
+    retval = find_ctc_handle (ctc_handle_id, &ctc_handle);
+    if (IS_FAILED (retval))
+    {
+        goto error;
+    }
+
+    retval = find_job_desc (ctc_handle, job_desc_id, &job_desc);
+    if (IS_FAILED (retval))
+    {
+        goto error;
+    }
+
+    retval = request_stop_capture (&ctc_handle->control_session, &job_desc->job_session, job_close_condition, true);
+    if (IS_FAILED (retval))
+    {
+        goto error;
+    }
+
+    clear_json_result (&job_desc->json_result, true);
+
+    return CTC_SUCCESS;
+
+error:
+
+    return retval;
+}
+
+int read_json (JOB_DESC *job_desc, char *buffer, int buffer_size, int *data_size)
+{
+    JSON_RESULT *json_result;
+    json_t *json;
+
+    json_t *result_array;
+
+    int result_size;
+
+    json_result = &job_desc->json_result;
+    json = json_result->json[json_result->json_read_idx];
+
+    if (IS_NULL (json))
+    {
+        return CTC_SUCCESS_NO_DATA;
+    }
+
+    result_array = json_result->result_array;
+
+    while (IS_NOT_NULL (json))
+    {
+        json_array_append (result_array, json);
+
+        result_size = json_dumpb (result_array, NULL, 0, 0);
+
+        if (result_size < buffer_size)
+        {
+            json_result->json_read_idx ++;
+            json = json_result->json[json_result->json_read_idx];
+        }
+        else if (result_size == buffer_size)
+        {
+            json_result->json_read_idx ++;
             break;
+        }
+        else
+        {
+            /* buffer overflow */
+            json_array_remove (result_array, json_array_size (result_array) - 1);
+            break;
+        }
     }
 
-    return CTC_FAILURE;
+    if (json_array_size (result_array) == 0)
+    {
+        /* minimum required buffer size */
+        *data_size = json_dumpb (json, NULL, 0, 0) + 2;
+
+        return CTC_FAILED_TOO_SMALL_RESULT_BUFFER_SIZE;
+    }
+
+    *data_size = json_dumpb (result_array, buffer, buffer_size, 0);
+
+#if defined(DEBUG)
+    assert (*data_size <= buffer_size);
+#endif
+
+    if (json_result->is_fragmented == true)
+    {
+        return CTC_SUCCESS_FRAGMENTED;
+    }
+    else
+    {
+        json = json_result->json[json_result->json_read_idx];
+
+        if (IS_NOT_NULL (json))
+        {
+            return CTC_SUCCESS_FRAGMENTED;
+        }
+        else
+        {
+            return CTC_SUCCESS;
+        }
+    }
 }
 
-int check_server_status (int ctc_handle_id, int *server_status)
+int fetch_capture_transaction (int ctc_handle_id, int job_desc_id, char *buffer, int buffer_size, int *data_size)
 {
     CTC_HANDLE *ctc_handle;
+    JOB_DESC *job_desc;
+    int retval;
 
-    if (IS_FAILURE (find_ctc_handle (ctc_handle_id, &ctc_handle)))
+    retval = find_ctc_handle (ctc_handle_id, &ctc_handle);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
 
-    if (IS_FAILURE (get_server_status (&ctc_handle->control_session, server_status)))
+    retval = find_job_desc (ctc_handle, job_desc_id, &job_desc);
+    if (IS_FAILED (retval))
+    {
+        goto error;
+    }
+
+    clear_json_result_array (&job_desc->json_result);
+
+    retval = read_json (job_desc, buffer, buffer_size, data_size);
+    if (IS_FAILED (retval))
+    {
+        goto error;
+    }
+    else
+    {
+        if (retval == CTC_SUCCESS_NO_DATA)
+        {
+            clear_json_result (&job_desc->json_result, false);
+
+            retval = convert_capture_transaction_to_json (&job_desc->job_session.capture_data, &job_desc->json_result, &job_desc->job_session.job_thread);
+            if (IS_FAILED (retval))
+            {
+                goto error;
+            }
+
+            if (retval != CTC_SUCCESS_NO_DATA)
+            {
+                retval = read_json (job_desc, buffer, buffer_size, data_size);
+                if (IS_FAILED (retval))
+                {
+                    goto error;
+                }
+            }
+        }
+    }
+
+error:
+
+    return retval;
+}
+
+int check_job_status (int ctc_handle_id, int job_desc_id, CTC_JOB_STATUS *job_status)
+{
+    CTC_HANDLE *ctc_handle;
+    JOB_DESC *job_desc;
+    int retval;
+
+    retval = find_ctc_handle (ctc_handle_id, &ctc_handle);
+    if (IS_FAILED (retval))
+    {
+        goto error;
+    }
+
+    retval = find_job_desc (ctc_handle, job_desc_id, &job_desc);
+    if (IS_FAILED (retval))
+    {
+        goto error;
+    }
+
+    retval = request_job_status (&ctc_handle->control_session, &job_desc->job_session, job_status);
+    if (IS_FAILED (retval))
     {
         goto error;
     }
@@ -363,92 +711,11 @@ int check_server_status (int ctc_handle_id, int *server_status)
 
 error:
 
-    return CTC_FAILURE;
-}
-
-int register_table (int ctc_handle_id, int job_handle_id, char *db_user, char *table_name)
-{
-    CTC_HANDLE *ctc_handle;
-    JOB_HANDLE *job_handle;
-
-    if (IS_FAILURE (find_ctc_handle (ctc_handle_id, &ctc_handle)))
-    {
-        goto error;
-    }
-
-    if (IS_FAILURE (find_job_handle (ctc_handle, job_handle_id, &job_handle)))
-    {
-        goto error;
-    }
-
-    if (IS_FAILURE (register_table_to_job (&ctc_handle->control_session, &job_handle->job_session, db_user, table_name)))
-    {
-        goto error;
-    }
-
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILURE;
-}
-
-int unregister_table (int ctc_handle_id, int job_handle_id, char *db_user, char *table_name)
-{
-    CTC_HANDLE *ctc_handle;
-    JOB_HANDLE *job_handle;
-
-    if (IS_FAILURE (find_ctc_handle (ctc_handle_id, &ctc_handle)))
-    {
-        goto error;
-    }
-
-    if (IS_FAILURE (find_job_handle (ctc_handle, job_handle_id, &job_handle)))
-    {
-        goto error;
-    }
-
-    if (IS_FAILURE (unregister_table_from_job (&ctc_handle->control_session, &job_handle->job_session, db_user, table_name)))
-    {
-        goto error;
-    }
-
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILURE;
-}
-
-int check_job_status (int ctc_handle_id, int job_handle_id, int *job_status)
-{
-    CTC_HANDLE *ctc_handle;
-    JOB_HANDLE *job_handle;
-
-    if (IS_FAILURE (find_ctc_handle (ctc_handle_id, &ctc_handle)))
-    {
-        goto error;
-    }
-
-    if (IS_FAILURE (find_job_handle (ctc_handle, job_handle_id, &job_handle)))
-    {
-        goto error;
-    }
-
-    if (IS_FAILURE (get_job_status (&ctc_handle->control_session, &job_handle->job_session, job_status)))
-    {
-        goto error;
-    }
-
-    return CTC_SUCCESS;
-
-error:
-
-    return CTC_FAILURE;
+    return retval;
 }
 
 #if 0
-    if (IS_FAILURE (
+    if (IS_FAILED (
     {
         goto error;
     }
@@ -457,6 +724,6 @@ error:
 
 error:
 
-    return CTC_FAILURE;
+    return CTC_FAILED;
 }
 #endif
