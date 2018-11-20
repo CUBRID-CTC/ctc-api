@@ -1210,26 +1210,8 @@ int read_data_info (char **read_pos_p, int *read_data_size, char *is_fragmented)
     return CTC_SUCCESS;
 }
 
-int read_number_of_items (char **read_pos_p, int *number_of_items)
-{
-    char *read_pos;
-
-    read_pos = *read_pos_p;
-
-    memcpy (number_of_items, read_pos, sizeof (int));
-    read_pos += sizeof (int);
-
-    if (*number_of_items <= 0)
-    {
-        return CTC_FAILED_RECEIVE_INVALID_DATA_PAYLOAD;
-    }
-
-    *read_pos_p = read_pos;
-
-    return CTC_SUCCESS;
-}
-
-int read_transaction_id (char **read_pos_p, json_t *root)
+/*
+int read_transaction_id (char **read_pos_p, int *tx_id)
 {
     int tx_id;
 
@@ -1251,7 +1233,47 @@ int read_transaction_id (char **read_pos_p, json_t *root)
 
     return CTC_SUCCESS;
 }
+*/
 
+int read_transaction_id (char **read_pos_p, int *tx_id)
+{
+    char *read_pos;
+
+    read_pos = *read_pos_p;
+
+    memcpy (tx_id, read_pos, sizeof (int));
+    read_pos += sizeof (int);
+
+    if (*tx_id < 0)
+    {
+        return CTC_FAILED_RECEIVE_INVALID_DATA_PAYLOAD;
+    }
+
+    *read_pos_p = read_pos;
+
+    return CTC_SUCCESS;
+}
+
+int read_number_of_items (char **read_pos_p, int *number_of_items)
+{
+    char *read_pos;
+
+    read_pos = *read_pos_p;
+
+    memcpy (number_of_items, read_pos, sizeof (int));
+    read_pos += sizeof (int);
+
+    if (*number_of_items <= 0)
+    {
+        return CTC_FAILED_RECEIVE_INVALID_DATA_PAYLOAD;
+    }
+
+    *read_pos_p = read_pos;
+
+    return CTC_SUCCESS;
+}
+
+/*
 int read_user_name (char **read_pos_p, json_t *root)
 {
     char user_name[128];
@@ -1280,6 +1302,7 @@ int read_user_name (char **read_pos_p, json_t *root)
 
     return CTC_SUCCESS;
 }
+*/
 
 int read_table_name (char **read_pos_p, json_t *root)
 {
@@ -1310,26 +1333,24 @@ int read_table_name (char **read_pos_p, json_t *root)
     return CTC_SUCCESS;
 }
 
-int read_statement_type (char **read_pos_p, json_t *root)
+int read_statement_type (char **read_pos_p, json_t *root, CTC_STMT_TYPE *stmt_type)
 {
-    int stmt_type;
-
     char *read_pos;
 
     read_pos = *read_pos_p;
 
-    memcpy (&stmt_type, read_pos, sizeof (int));
+    memcpy (stmt_type, read_pos, sizeof (int));
     read_pos += sizeof (int);
 
-    if (stmt_type == CTC_STMT_TYPE_INSERT)
+    if (*stmt_type == CTC_STMT_TYPE_INSERT)
     {
         json_object_set_new (root, "Statement type", json_string ("insert"));
     }
-    else if (stmt_type == CTC_STMT_TYPE_UPDATE)
+    else if (*stmt_type == CTC_STMT_TYPE_UPDATE)
     {
         json_object_set_new (root, "Statement type", json_string ("update"));
     }
-    else if (stmt_type == CTC_STMT_TYPE_DELETE)
+    else if (*stmt_type == CTC_STMT_TYPE_DELETE)
     {
         json_object_set_new (root, "Statement type", json_string ("delete"));
     }
@@ -1343,18 +1364,100 @@ int read_statement_type (char **read_pos_p, json_t *root)
     return CTC_SUCCESS;
 }
 
+int read_key_columns (char **read_pos_p, json_t *root)
+{
+    char attr_name[128];
+    int attr_name_len;
+
+    char attr_str_val[128];
+    int attr_num_val;
+    int attr_val_len;
+
+    char *read_pos;
+
+    DB_TYPE db_type;
+
+    json_t *key_columns;
+
+    read_pos = *read_pos_p;
+
+    key_columns = json_object ();
+    if (IS_NULL (key_columns))
+    {
+        return CTC_FAILED_JANSSON_EXTERNAL_LIBRARY;
+    }
+
+    /* attribute name */
+    memcpy (&attr_name_len, read_pos, sizeof (int));
+    read_pos += sizeof (int);
+
+    if (attr_name_len <= 0)
+    {
+        return CTC_FAILED_RECEIVE_INVALID_DATA_PAYLOAD;
+    }
+
+    memcpy (attr_name, read_pos, attr_name_len);
+    read_pos += attr_name_len;
+
+    attr_name[attr_name_len] = '\0';
+
+    /* attribute type */
+    memcpy (&db_type, read_pos, sizeof (DB_TYPE));
+    read_pos += sizeof (DB_TYPE);
+
+    /* attribute value */
+    memcpy (&attr_val_len, read_pos, sizeof (int));
+    read_pos += sizeof (int);
+
+    if (attr_val_len <= 0 )
+    {
+        return CTC_FAILED_RECEIVE_INVALID_DATA_PAYLOAD;
+    }
+
+    if (db_type == DB_TYPE_INTEGER)
+    {
+        memcpy (&attr_num_val, read_pos, attr_val_len);
+        read_pos += attr_val_len;
+
+        json_object_set_new (key_columns, attr_name, json_integer (attr_num_val));
+    }
+    else if (db_type == DB_TYPE_VARCHAR ||
+             db_type == DB_TYPE_CHAR)
+    {
+        memcpy (attr_str_val, read_pos, attr_val_len);
+        read_pos += attr_val_len;
+
+        attr_str_val[attr_val_len] = '\0';
+
+        json_object_set_new (key_columns, attr_name, json_string (attr_str_val));
+    }
+    else
+    {
+        return CTC_FAILED_RECEIVE_INVALID_DATA_PAYLOAD;
+    }
+
+    json_object_set_new (root, "Key columns", key_columns);
+
+    *read_pos_p = read_pos;
+
+    return CTC_SUCCESS;
+}
+
 int read_columns (char **read_pos_p, json_t *root)
 {
     char attr_name[128];
     int attr_name_len;
 
-    char attr_val[128];
+    char attr_str_val[128];
+    int attr_num_val;
     int attr_val_len;
 
     int number_of_attr;
     int i;
 
     char *read_pos;
+
+    DB_TYPE db_type;
 
     json_t *columns;
 
@@ -1390,6 +1493,10 @@ int read_columns (char **read_pos_p, json_t *root)
 
         attr_name[attr_name_len] = '\0';
 
+        /* attribute type */
+        memcpy (&db_type, read_pos, sizeof (DB_TYPE));
+        read_pos += sizeof (DB_TYPE);
+
         /* attribute value */
         memcpy (&attr_val_len, read_pos, sizeof (int));
         read_pos += sizeof (int);
@@ -1399,12 +1506,29 @@ int read_columns (char **read_pos_p, json_t *root)
             return CTC_FAILED_RECEIVE_INVALID_DATA_PAYLOAD;
         }
 
-        memcpy (attr_val, read_pos, attr_val_len);
-        read_pos += attr_val_len;
+        if (db_type == DB_TYPE_INTEGER)
+        {
+            memcpy (&attr_num_val, read_pos, attr_val_len);
+            read_pos += attr_val_len;
 
-        attr_val[attr_val_len] = '\0';
+            json_object_set_new (columns, attr_name, json_integer (attr_num_val));
+        }
+        else if (db_type == DB_TYPE_VARCHAR ||
+                 db_type == DB_TYPE_CHAR)
+        {
+            memcpy (attr_str_val, read_pos, attr_val_len);
+            read_pos += attr_val_len;
 
-        json_object_set_new (columns, attr_name, json_string (attr_val));
+            attr_str_val[attr_val_len] = '\0';
+
+            json_object_set_new (columns, attr_name, json_string (attr_str_val));
+        }
+        else
+        {
+            return CTC_FAILED_RECEIVE_INVALID_DATA_PAYLOAD;
+        }
+
+        json_object_set_new (columns, attr_name, json_string (attr_str_val));
     }
 
     json_object_set_new (root, "Columns", columns);
@@ -1431,10 +1555,12 @@ int convert_capture_transaction_to_json (CAPTURE_DATA *capture_data, JSON_RESULT
     char *read_pos = NULL;
     int data_size;
     int number_of_items;
+    int tx_id;
     int i;
 
     char is_fragmented;
 
+    CTC_STMT_TYPE stmt_type;
     json_t *root;
 
     int retval;
@@ -1471,6 +1597,13 @@ int convert_capture_transaction_to_json (CAPTURE_DATA *capture_data, JSON_RESULT
         json_result->is_fragmented = false;
     }
 
+    /* Transaction ID */
+    retval = read_transaction_id (&read_pos, &tx_id);
+    if (IS_FAILED (retval))
+    {
+        goto error;
+    }
+
     retval = read_number_of_items (&read_pos, &number_of_items);
     if (IS_FAILED (retval))
     {
@@ -1491,20 +1624,9 @@ int convert_capture_transaction_to_json (CAPTURE_DATA *capture_data, JSON_RESULT
             retval = CTC_FAILED_JANSSON_EXTERNAL_LIBRARY;
             goto error;
         }
-
+        
         /* Transaction ID */
-        retval = read_transaction_id (&read_pos, root);
-        if (IS_FAILED (retval))
-        {
-            goto error;
-        }
-
-        /* User name */
-        retval = read_user_name (&read_pos, root);
-        if (IS_FAILED (retval))
-        {
-            goto error;
-        }
+        json_object_set_new (root, "Transaction ID", json_integer (tx_id));
 
         /* Table name */
         retval = read_table_name (&read_pos, root);
@@ -1514,17 +1636,32 @@ int convert_capture_transaction_to_json (CAPTURE_DATA *capture_data, JSON_RESULT
         }
 
         /* Statement type */
-        retval = read_statement_type (&read_pos, root);
+        retval = read_statement_type (&read_pos, root, &stmt_type);
         if (IS_FAILED (retval))
         {
             goto error;
         }
 
-        /* Columns */
-        retval = read_columns (&read_pos, root);
-        if (IS_FAILED (retval))
+        /* Key columns */
+        if (stmt_type == CTC_STMT_TYPE_DELETE ||
+            stmt_type == CTC_STMT_TYPE_UPDATE)
         {
-            goto error;
+            retval = read_key_columns (&read_pos, root);
+            if (IS_FAILED (retval))
+            {
+                goto error;
+            }
+        }
+
+        /* Columns */
+        if (stmt_type == CTC_STMT_TYPE_INSERT ||
+            stmt_type == CTC_STMT_TYPE_UPDATE)
+        {
+            retval = read_columns (&read_pos, root);
+            if (IS_FAILED (retval))
+            {
+                goto error;
+            }
         }
 
         retval = register_json (json_result, i, root);

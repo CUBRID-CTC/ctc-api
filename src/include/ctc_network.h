@@ -6,6 +6,7 @@
 #include <pthread.h>
 #include <jansson.h>
 #include "ctc_common.h"
+#include "ctc_cubrid_def.h"
 
 #define CTCP_MAJOR_VERSION 1
 #define CTCP_MINOR_VERSION 0
