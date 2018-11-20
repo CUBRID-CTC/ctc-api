@@ -11,6 +11,8 @@ int main (void)
     int  buffer_size = 4096;
     int  data_size   = 0;
 
+    int dd = 1;
+
     ctc_handle = ctc_open_connection (0, "ctc:cubrid:192.168.1.77:20000");
     //ctc_handle = ctc_open_connection (0, "ctc:cubrid:192.168.1.77:20050");
     if (ctc_handle == CTC_FAILURE)
@@ -40,6 +42,8 @@ int main (void)
         return -1;
     }
 
+    //while (dd == 1);
+
     while (1)
     {
         retval = ctc_fetch_capture_transaction (ctc_handle, job_desc, result_buffer, buffer_size, &data_size);
@@ -52,14 +56,17 @@ int main (void)
         {
             if (retval == CTC_SUCCESS)
             {
+                printf ("[recv] SUCCESS\n");
                 break;
             }
             else if (retval == CTC_SUCCESS_FRAGMENTED)
             {
+                printf ("[recv] FRAGMENTED\n");
                 continue;
             }
             else if (retval == CTC_SUCCESS_NO_DATA)
             {
+                printf ("[recv] NO_DATA\n");
                 continue;
             }
             else

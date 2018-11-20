@@ -7,10 +7,6 @@ int main (void)
     int job_desc;
     int retval;
 
-    char result_buffer[20000];
-    int  buffer_size = 20000;
-    int  data_size   = 0;
-
     ctc_handle = ctc_open_connection (0, "ctc:cubrid:192.168.1.77:20000");
     if (ctc_handle == CTC_FAILURE)
     {
@@ -39,38 +35,26 @@ int main (void)
         return -1;
     }
 
-    while (1)
+    retval = ctc_stop_capture (ctc_handle, job_desc, 0);
+    if (retval == CTC_FAILURE)
     {
-        retval = ctc_fetch_capture_transaction (ctc_handle, job_desc, result_buffer, buffer_size, &data_size);
-        if (retval == CTC_FAILURE)
-        {
-            printf ("[ERROR] ctc_fetch_transaction_capture ()\n");
-            return -1;
-        }
-        else
-        {
-            if (retval == CTC_SUCCESS)
-            {
-                break;
-            }
-            else if (retval == CTC_SUCCESS_FRAGMENTED)
-            {
-                continue;
-            }
-            else if (retval == CTC_SUCCESS_NO_DATA)
-            {
-                continue;
-            }
-            else
-            {
-
-            }
-        }
+        printf ("[ERROR] ctc_stop_capture ()\n");
+        return -1;
     }
 
-    result_buffer[data_size] = '\0';
-    printf ("result ==> %s\n", result_buffer);
-    printf ("data_size ==> %d\n", data_size);
+    retval = ctc_unregister_table (ctc_handle, job_desc, "dba1", "tbl1");
+    if (retval == CTC_FAILURE)
+    {
+        printf ("[ERROR] ctc_unregister_table ()\n");
+        return -1;
+    }
+
+    job_desc = ctc_delete_job (ctc_handle, job_desc);
+    if (job_desc == CTC_FAILURE)
+    {
+        printf ("[ERROR] ctc_delete_job ()\n");
+        return -1;
+    }
 
     retval = ctc_close_connection (ctc_handle);
     if (retval == CTC_FAILURE)

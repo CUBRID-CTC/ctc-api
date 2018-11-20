@@ -22,25 +22,31 @@ FILE(COPY ../src/libctcapi.so.1.0.0 DESTINATION .)
 LINK_DIRECTORIES(/home/hornetmj/work/ctc-api/samples)
 
 ADD_EXECUTABLE(sample_01 sample_01.c)
-TARGET_LINK_LIBRARIES(sample_01 ctcapi pthread)
+TARGET_LINK_LIBRARIES(sample_01 ctcapi pthread jansson)
 
 ADD_EXECUTABLE(sample_02 sample_02.c)
-TARGET_LINK_LIBRARIES(sample_02 ctcapi pthread)
+TARGET_LINK_LIBRARIES(sample_02 ctcapi pthread jansson)
 
 ADD_EXECUTABLE(sample_03 sample_03.c)
-TARGET_LINK_LIBRARIES(sample_03 ctcapi pthread)
+TARGET_LINK_LIBRARIES(sample_03 ctcapi pthread jansson)
 
 ADD_EXECUTABLE(sample_04 sample_04.c)
-TARGET_LINK_LIBRARIES(sample_04 ctcapi pthread)
+TARGET_LINK_LIBRARIES(sample_04 ctcapi pthread jansson)
 
 ADD_EXECUTABLE(sample_05 sample_05.c)
-TARGET_LINK_LIBRARIES(sample_05 ctcapi pthread)
+TARGET_LINK_LIBRARIES(sample_05 ctcapi pthread jansson)
 
 ADD_EXECUTABLE(sample_06 sample_06.c)
-TARGET_LINK_LIBRARIES(sample_06 ctcapi pthread)
+TARGET_LINK_LIBRARIES(sample_06 ctcapi pthread jansson)
 
 ADD_EXECUTABLE(sample_07 sample_07.c)
-TARGET_LINK_LIBRARIES(sample_07 ctcapi pthread)
+TARGET_LINK_LIBRARIES(sample_07 ctcapi pthread jansson)
 
 ADD_EXECUTABLE(sample_08 sample_08.c)
-TARGET_LINK_LIBRARIES(sample_08 ctcapi pthread)
+TARGET_LINK_LIBRARIES(sample_08 ctcapi pthread jansson)
+
+ADD_EXECUTABLE(sample_09 sample_09.c)
+TARGET_LINK_LIBRARIES(sample_09 ctcapi pthread jansson)
+
+ADD_EXECUTABLE(sample_10 sample_10.c)
+TARGET_LINK_LIBRARIES(sample_10 ctcapi pthread jansson)
