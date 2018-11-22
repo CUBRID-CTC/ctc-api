@@ -20,13 +20,13 @@ int make_ctcp_header (CTCP_OP_ID op_id, char op_param, CONTROL_SESSION *control_
     /* Job descriptor */
     if (job_session != NULL && job_session->job_desc != INITIAL_JOB_DESC)
     {
-        ctcp->header.job_desc = job_session->job_desc;
+        ctcp->header.job_desc = htons (job_session->job_desc);
     }
 
     /* Session group ID */
     if (control_session->session_gid != INITIAL_SESSION_GID)
     {
-        ctcp->header.session_gid = control_session->session_gid;
+        ctcp->header.session_gid = htonl (control_session->session_gid);
     }
 
     /* Protocol version */
@@ -214,7 +214,7 @@ int check_job_desc (CTCP_HEADER *ctcp_header, JOB_SESSION *job_session)
 {
     if (job_session != NULL && job_session->job_desc != INITIAL_JOB_DESC)
     {
-        if (ctcp_header->job_desc != job_session->job_desc)
+        if (ntohs (ctcp_header->job_desc) != job_session->job_desc)
         {
             return CTC_FAILED_RECEIVE_INVALID_JOB_DESC;
         }
@@ -227,7 +227,7 @@ int check_session_gid (CTCP_HEADER *ctcp_header, CONTROL_SESSION *control_sessio
 {
     if (control_session->session_gid != INITIAL_SESSION_GID)
     {
-        if (ctcp_header->session_gid != control_session->session_gid)
+        if (ntohs (ctcp_header->session_gid) != control_session->session_gid)
         {
             return CTC_FAILED_RECEIVE_INVALID_SESSION_GID;
         }
@@ -433,11 +433,11 @@ int recv_ctcp_header (CTCP_OP_ID op_id, CONTROL_SESSION *control_session, JOB_SE
     switch (ctcp_header.op_id)
     {
         case CTCP_CREATE_CONTROL_SESSION_RESULT:
-            set_session_gid (control_session, ctcp_header.session_gid);
+            set_session_gid (control_session, ntohl (ctcp_header.session_gid));
 
             break;
         case CTCP_CREATE_JOB_SESSION_RESULT:
-            set_job_desc (job_session, ctcp_header.job_desc);
+            set_job_desc (job_session, ntohs (ctcp_header.job_desc));
 
             break;
         case CTCP_REQUEST_JOB_STATUS_RESULT:
@@ -688,7 +688,9 @@ int make_data_payload (char *user_name, char *table_name, char *buffer, int buff
 {
     int data_size;
     int user_name_len;
+    int user_name_len_hton;
     int table_name_len;
+    int table_name_len_hton;
     char *write_pos;
 
     user_name_len  = strlen (user_name);
@@ -703,13 +705,17 @@ int make_data_payload (char *user_name, char *table_name, char *buffer, int buff
 
     write_pos = buffer;
 
-    memcpy (write_pos, &user_name_len, sizeof (int));
+    user_name_len_hton = htonl (user_name_len);
+
+    memcpy (write_pos, &user_name_len_hton, sizeof (int));
     write_pos += sizeof (int);
 
     memcpy (write_pos, user_name, user_name_len);
     write_pos += user_name_len;
 
-    memcpy (write_pos, &table_name_len, sizeof (int));
+    table_name_len_hton = htonl (table_name_len);
+
+    memcpy (write_pos, &table_name_len_hton, sizeof (int));
     write_pos += sizeof (int);
 
     memcpy (write_pos, table_name, table_name_len);
