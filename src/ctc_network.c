@@ -36,7 +36,7 @@ int make_ctcp_header (CTCP_OP_ID op_id, char op_param, CONTROL_SESSION *control_
     ctcp->header.version[3] = CTCP_BUILD_VERSION;
 
     /* etc - job or server status, data length, job attribute value */
-    ctcp->header.header_data = header_data;
+    ctcp->header.header_data = htonl (header_data);
 
     return CTC_SUCCESS;
 }
@@ -441,27 +441,27 @@ int recv_ctcp_header (CTCP_OP_ID op_id, CONTROL_SESSION *control_session, JOB_SE
 
             break;
         case CTCP_REQUEST_JOB_STATUS_RESULT:
-            retval = check_received_job_status (ctcp_header.header_data);
+            retval = check_received_job_status (ntohl (ctcp_header.header_data));
             if (IS_FAILED (retval))
             {
                 goto error;
             }
 
-            *header_data = ctcp_header.header_data;
+            *header_data = ntohl (ctcp_header.header_data);
 
             break;
         case CTCP_REQUEST_SERVER_STATUS_RESULT:
-            retval = check_received_server_status (ctcp_header.header_data);
+            retval = check_received_server_status (ntohl (ctcp_header.header_data));
             if (IS_FAILED (retval))
             {
                 goto error;
             }
 
-            *header_data = ctcp_header.header_data;
+            *header_data = ntohl (ctcp_header.header_data);
 
             break;
         case CTCP_CAPTURED_DATA_RESULT:
-            *header_data = ctcp_header.header_data;
+            *header_data = ntohl (ctcp_header.header_data);
             *is_fragmented = ctcp_header.op_param_or_result_code;
 
             break;
@@ -1244,11 +1244,15 @@ int read_transaction_id (char **read_pos_p, int *tx_id)
 int read_transaction_id (char **read_pos_p, int *tx_id)
 {
     char *read_pos;
+    int tx_id_ntoh;
 
     read_pos = *read_pos_p;
 
-    memcpy (tx_id, read_pos, sizeof (int));
+    //memcpy (tx_id, read_pos, sizeof (int));
+    memcpy (&tx_id_ntoh, read_pos, sizeof (int));
     read_pos += sizeof (int);
+
+    *tx_id = ntohl (tx_id_ntoh);
 
     if (*tx_id < 0)
     {
@@ -1264,10 +1268,15 @@ int read_number_of_items (char **read_pos_p, int *number_of_items)
 {
     char *read_pos;
 
+    int number_of_items_ntoh;
+
     read_pos = *read_pos_p;
 
-    memcpy (number_of_items, read_pos, sizeof (int));
+    //memcpy (number_of_items, read_pos, sizeof (int));
+    memcpy (&number_of_items_ntoh, read_pos, sizeof (int));
     read_pos += sizeof (int);
+
+    *number_of_items = ntohl (number_of_items_ntoh);
 
     if (*number_of_items <= 0)
     {
@@ -1314,13 +1323,17 @@ int read_table_name (char **read_pos_p, json_t *root)
 {
     char table_name[128];
     int table_name_len;
+    int table_name_len_ntoh;
 
     char *read_pos;
 
     read_pos = *read_pos_p;
 
-    memcpy (&table_name_len, read_pos, sizeof (int));
+    //memcpy (&table_name_len, read_pos, sizeof (int));
+    memcpy (&table_name_len_ntoh, read_pos, sizeof (int));
     read_pos += sizeof (int);
+
+    table_name_len = ntohl (table_name_len_ntoh);
 
     if (table_name_len <= 0)
     {
@@ -1343,10 +1356,15 @@ int read_statement_type (char **read_pos_p, json_t *root, CTC_STMT_TYPE *stmt_ty
 {
     char *read_pos;
 
+    CTC_STMT_TYPE stmt_type_ntoh;
+
     read_pos = *read_pos_p;
 
-    memcpy (stmt_type, read_pos, sizeof (int));
+    //memcpy (stmt_type, read_pos, sizeof (int));
+    memcpy (&stmt_type_ntoh, read_pos, sizeof (int));
     read_pos += sizeof (int);
+
+    *stmt_type = ntohl (stmt_type_ntoh);
 
     if (*stmt_type == CTC_STMT_TYPE_INSERT)
     {
@@ -1374,14 +1392,18 @@ int read_key_columns (char **read_pos_p, json_t *root)
 {
     char attr_name[128];
     int attr_name_len;
+    int attr_name_len_ntoh;
 
     char attr_str_val[128];
     int attr_num_val;
+    int attr_num_val_ntoh;
     int attr_val_len;
+    int attr_val_len_ntoh;
 
     char *read_pos;
 
     DB_TYPE db_type;
+    DB_TYPE db_type_ntoh;
 
     json_t *key_columns;
 
@@ -1394,8 +1416,11 @@ int read_key_columns (char **read_pos_p, json_t *root)
     }
 
     /* attribute name */
-    memcpy (&attr_name_len, read_pos, sizeof (int));
+    //memcpy (&attr_name_len, read_pos, sizeof (int));
+    memcpy (&attr_name_len_ntoh, read_pos, sizeof (int));
     read_pos += sizeof (int);
+
+    attr_name_len = ntohl (attr_name_len_ntoh);
 
     if (attr_name_len <= 0)
     {
@@ -1408,12 +1433,18 @@ int read_key_columns (char **read_pos_p, json_t *root)
     attr_name[attr_name_len] = '\0';
 
     /* attribute type */
-    memcpy (&db_type, read_pos, sizeof (DB_TYPE));
+    //memcpy (&db_type, read_pos, sizeof (DB_TYPE));
+    memcpy (&db_type_ntoh, read_pos, sizeof (DB_TYPE));
     read_pos += sizeof (DB_TYPE);
 
+    db_type = ntohl (db_type_ntoh);
+
     /* attribute value */
-    memcpy (&attr_val_len, read_pos, sizeof (int));
+    //memcpy (&attr_val_len, read_pos, sizeof (int));
+    memcpy (&attr_val_len_ntoh, read_pos, sizeof (int));
     read_pos += sizeof (int);
+
+    attr_val_len = ntohl (attr_val_len_ntoh);
 
     if (attr_val_len <= 0 )
     {
@@ -1422,8 +1453,11 @@ int read_key_columns (char **read_pos_p, json_t *root)
 
     if (db_type == DB_TYPE_INTEGER)
     {
-        memcpy (&attr_num_val, read_pos, attr_val_len);
+        //memcpy (&attr_num_val, read_pos, attr_val_len);
+        memcpy (&attr_num_val_ntoh, read_pos, attr_val_len);
         read_pos += attr_val_len;
+
+        attr_num_val = ntohl (attr_num_val_ntoh);
 
         json_object_set_new (key_columns, attr_name, json_integer (attr_num_val));
     }
@@ -1453,10 +1487,13 @@ int read_columns (char **read_pos_p, json_t *root)
 {
     char attr_name[128];
     int attr_name_len;
+    int attr_name_len_ntoh;
 
     char attr_str_val[128];
     int attr_num_val;
+    int attr_num_val_ntoh;
     int attr_val_len;
+    int attr_val_len_ntoh;
 
     int number_of_attr;
     int i;
@@ -1486,8 +1523,11 @@ int read_columns (char **read_pos_p, json_t *root)
     for (i = 0; i < number_of_attr; i ++)
     {
         /* attribute name */
-        memcpy (&attr_name_len, read_pos, sizeof (int));
+        //memcpy (&attr_name_len, read_pos, sizeof (int));
+        memcpy (&attr_name_len_ntoh, read_pos, sizeof (int));
         read_pos += sizeof (int);
+
+        attr_name_len = ntohl (attr_name_len_ntoh);
 
         if (attr_name_len <= 0)
         {
@@ -1504,8 +1544,11 @@ int read_columns (char **read_pos_p, json_t *root)
         read_pos += sizeof (DB_TYPE);
 
         /* attribute value */
-        memcpy (&attr_val_len, read_pos, sizeof (int));
+        //memcpy (&attr_val_len, read_pos, sizeof (int));
+        memcpy (&attr_val_len_ntoh, read_pos, sizeof (int));
         read_pos += sizeof (int);
+
+        attr_val_len = ntohl (attr_val_len_ntoh);
 
         if (attr_val_len <= 0 )
         {
@@ -1514,8 +1557,11 @@ int read_columns (char **read_pos_p, json_t *root)
 
         if (db_type == DB_TYPE_INTEGER)
         {
-            memcpy (&attr_num_val, read_pos, attr_val_len);
+            //memcpy (&attr_num_val, read_pos, attr_val_len);
+            memcpy (&attr_num_val_ntoh, read_pos, attr_val_len);
             read_pos += attr_val_len;
+
+            attr_num_val = ntohl (attr_num_val_ntoh);
 
             json_object_set_new (columns, attr_name, json_integer (attr_num_val));
         }
