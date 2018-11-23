@@ -227,7 +227,7 @@ int check_session_gid (CTCP_HEADER *ctcp_header, CONTROL_SESSION *control_sessio
 {
     if (control_session->session_gid != INITIAL_SESSION_GID)
     {
-        if (ntohs (ctcp_header->session_gid) != control_session->session_gid)
+        if (ntohl (ctcp_header->session_gid) != control_session->session_gid)
         {
             return CTC_FAILED_RECEIVE_INVALID_SESSION_GID;
         }
