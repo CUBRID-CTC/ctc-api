@@ -7,6 +7,13 @@
 #include <errno.h>
 #include "ctc_network.h"
 
+int total_count_recv_items = 0;
+int recv_c1 = 0;
+int recv_count = 1;
+
+int c1_val = 1;
+int c1_val_api_read = 1;
+
 int make_ctcp_header (CTCP_OP_ID op_id, char op_param, CONTROL_SESSION *control_session, JOB_SESSION *job_session, int header_data, CTCP *ctcp)
 {
     memset (&ctcp->header, 0, CTCP_PACKET_HEADER_SIZE);
@@ -112,6 +119,7 @@ int send_ctcp (CTCP_OP_ID op_id, char op_param, CONTROL_SESSION *control_session
     {
         if (IS_FAILED (send_stream (job_session->sockfd, (char *)&ctcp.header, send_data_size)))
         {
+            printf ("send_stream failed\n");
             retval = CTC_FAILED_COMMUNICATE_JOB_SESSION;
             goto error;
         }
@@ -303,6 +311,8 @@ int recv_stream (int sockfd, char *buffer, int requested_recv_size, int timeout)
 
     total_read_size = 0;
 
+    timeout = 30000;
+
     while (total_read_size < requested_recv_size)
     {
         poll_fds[0].fd = sockfd;
@@ -350,7 +360,8 @@ int recv_stream (int sockfd, char *buffer, int requested_recv_size, int timeout)
             }
 
             read_size = read (sockfd, buffer + total_read_size, requested_recv_size - total_read_size);
-            if (read_size < 0)
+
+            if (read_size <= 0)
             {
                 return CTC_FAILED;
             }
@@ -375,6 +386,7 @@ int recv_ctcp_header (CTCP_OP_ID op_id, CONTROL_SESSION *control_session, JOB_SE
         {
             if (retval != CTC_FAILED_POLL_TIMEOUT)
             {
+                printf ("recv_stream failed\n");
                 retval = CTC_FAILED_COMMUNICATE_JOB_SESSION;
             }
 
@@ -485,12 +497,32 @@ int recv_ctcp_data_payload (JOB_SESSION *job_session, char *buffer, int data_siz
     {
         if (retval != CTC_FAILED_POLL_TIMEOUT)
         {
+            printf ("recv_stream payload failed\n");
             retval = CTC_FAILED_COMMUNICATE_JOB_SESSION;
         }
 
         return retval;
     }
 
+    //fprintf (stdout, "[%d] recv c1 ==> %d\n", recv_count++, *(int *)(buffer + 2 + 36));
+    //fflush (stdout);
+
+#if 0
+    if (c1_val == *(int *)(buffer + 2 + 36))
+    {
+        c1_val ++;;
+    }
+    else if (c1_val -1 == *(int *)(buffer + 2 + 36))
+    {
+        ;;
+    }
+    else
+    {
+        fprintf (stdout, "c1_val ==> %d, recv c1_val ==> %d\n", c1_val, *(int *)(buffer + 2 + 36));
+        fflush (stdout);
+        c1_val = (*(int *)(buffer + 2 + 36)) + 1;
+    }
+#endif
     return CTC_SUCCESS;
 }
 
@@ -588,6 +620,14 @@ int open_job_session (CONTROL_SESSION *control_session, JOB_SESSION *job_session
     {
         retval = CTC_FAILED_OPEN_JOB_SESSION;
         goto error;
+    }
+
+    int opt = 4096 * 2;
+
+    if (-1 == setsockopt (job_session->sockfd, SOL_SOCKET, SO_RCVBUF, &opt, sizeof (opt)))
+    {
+        fprintf (stderr, "setsockopt (SO_RCVBUF)\n");
+        fflush (stderr);
     }
 
     state = 1;
@@ -1269,17 +1309,28 @@ int read_number_of_items (char **read_pos_p, int *number_of_items)
     char *read_pos;
 
     int number_of_items_ntoh;
+//    char aaa[4] = {0,};
 
     read_pos = *read_pos_p;
 
+ //   aaa[3] = read_pos[0];
+   // aaa[2] = read_pos[1];
+    //aaa[1] = read_pos[2];
+    //aaa[0] = read_pos[3];
+
     //memcpy (number_of_items, read_pos, sizeof (int));
     memcpy (&number_of_items_ntoh, read_pos, sizeof (int));
+//    memcpy (aaa, read_pos, 4);
     read_pos += sizeof (int);
 
     *number_of_items = ntohl (number_of_items_ntoh);
+   // *number_of_items = (int) ntohl (aaa);
+//    *number_of_items = (int) atoi (aaa);
 
     if (*number_of_items <= 0)
     {
+        //fprintf (stdout, "*number_of_items = %d\n", *number_of_items);
+        //fflush (stdout);
         return CTC_FAILED_RECEIVE_INVALID_DATA_PAYLOAD;
     }
 
@@ -1453,11 +1504,12 @@ int read_key_columns (char **read_pos_p, json_t *root)
 
     if (db_type == DB_TYPE_INTEGER)
     {
-        //memcpy (&attr_num_val, read_pos, attr_val_len);
-        memcpy (&attr_num_val_ntoh, read_pos, attr_val_len);
+        memcpy (&attr_num_val, read_pos, attr_val_len);
+        //memcpy (&attr_num_val_ntoh, read_pos, attr_val_len);
         read_pos += attr_val_len;
 
-        attr_num_val = ntohl (attr_num_val_ntoh);
+        //printf ("attr_val_len = %d\n attr_num_val = %d\n", attr_val_len, attr_num_val);
+        //attr_num_val = ntohl (attr_num_val_ntoh);
 
         json_object_set_new (key_columns, attr_name, json_integer (attr_num_val));
     }
@@ -1473,6 +1525,9 @@ int read_key_columns (char **read_pos_p, json_t *root)
     }
     else
     {
+        /* DEBUG */
+        //fprintf (stderr, "db_type\n");
+        //fflush (stderr);
         return CTC_FAILED_RECEIVE_INVALID_DATA_PAYLOAD;
     }
 
@@ -1496,21 +1551,34 @@ int read_columns (char **read_pos_p, json_t *root)
     int attr_val_len_ntoh;
 
     int number_of_attr;
+    int number_of_attr_ntoh;
     int i;
 
     char *read_pos;
 
-    DB_TYPE db_type;
+    int db_type;
+    int db_type_ntoh;
 
     json_t *columns;
 
     read_pos = *read_pos_p;
 
-    memcpy (&number_of_attr, read_pos, sizeof (int));
+    //memcpy (&number_of_attr, read_pos, sizeof (int));
+    memcpy (&number_of_attr_ntoh, read_pos, sizeof (int));
     read_pos += sizeof (int);
 
+    number_of_attr = ntohl (number_of_attr_ntoh);
+
+        /* DEBUG */
+        //fprintf (stdout, "number_of_attr: %d\n", number_of_attr);
+        //fprintf (stdout, "number_of_attr_ntoh: %d\n", number_of_attr_ntoh);
+        //fflush (stdout);
     if (number_of_attr <= 0)
     {
+        /* DEBUG */
+        //fprintf (stdout, "number_of_attr: %d\n", number_of_attr);
+        //fprintf (stdout, "number_of_attr_ntoh: %d\n", number_of_attr_ntoh);
+        //fflush (stdout);
         return CTC_FAILED_RECEIVE_INVALID_DATA_PAYLOAD;
     }
 
@@ -1540,8 +1608,12 @@ int read_columns (char **read_pos_p, json_t *root)
         attr_name[attr_name_len] = '\0';
 
         /* attribute type */
-        memcpy (&db_type, read_pos, sizeof (DB_TYPE));
-        read_pos += sizeof (DB_TYPE);
+        //memcpy (&db_type, read_pos, sizeof (DB_TYPE));
+        memcpy (&db_type_ntoh, read_pos, sizeof (int));
+        read_pos += sizeof (int);
+        //read_pos += sizeof (DB_TYPE);
+        //
+        db_type = ntohl (db_type_ntoh);
 
         /* attribute value */
         //memcpy (&attr_val_len, read_pos, sizeof (int));
@@ -1552,18 +1624,46 @@ int read_columns (char **read_pos_p, json_t *root)
 
         if (attr_val_len <= 0 )
         {
+        /* DEBUG */
+        //fprintf (stderr, "attr_val_len\n");
+        //fflush (stderr);
             return CTC_FAILED_RECEIVE_INVALID_DATA_PAYLOAD;
         }
 
+            
+        //fprintf (stdout, "db_type = %d\n", db_type);
+        //fflush (stdout);
+
         if (db_type == DB_TYPE_INTEGER)
         {
-            //memcpy (&attr_num_val, read_pos, attr_val_len);
-            memcpy (&attr_num_val_ntoh, read_pos, attr_val_len);
+            memcpy (&attr_num_val, read_pos, attr_val_len);
+//            memcpy (&attr_num_val_ntoh, read_pos, attr_val_len);
             read_pos += attr_val_len;
 
-            attr_num_val = ntohl (attr_num_val_ntoh);
+//            attr_num_val = ntohl (attr_num_val_ntoh);
+            //fprintf (stdout, "attr_num_val = %d\n", attr_num_val);
+            //fprintf (stdout, "attr_val_len = %d\n", attr_val_len);
+            //fflush (stdout);
 
             json_object_set_new (columns, attr_name, json_integer (attr_num_val));
+
+#if 0
+            // DEBUG
+            if (c1_val_api_read == attr_num_val)
+            {
+                c1_val_api_read ++;;
+            }
+            else if (c1_val_api_read -1 == attr_num_val)
+            {
+                ;;
+            }
+            else
+            {
+                fprintf (stdout, "c1_val_api_read ==> %d, attr_num_val ==> %d\n", c1_val_api_read, attr_num_val);
+                fflush (stdout);
+                c1_val_api_read = attr_num_val + 1;
+            }
+#endif
         }
         else if (db_type == DB_TYPE_VARCHAR ||
                  db_type == DB_TYPE_CHAR)
@@ -1580,7 +1680,8 @@ int read_columns (char **read_pos_p, json_t *root)
             return CTC_FAILED_RECEIVE_INVALID_DATA_PAYLOAD;
         }
 
-        json_object_set_new (columns, attr_name, json_string (attr_str_val));
+        //json_object_set_new (columns, attr_name, json_string (attr_str_val));
+        //fprintf (stdout, "%s\n", json_dumps (columns, 0));
     }
 
     json_object_set_new (root, "Columns", columns);
@@ -1650,23 +1751,37 @@ int convert_capture_transaction_to_json (CAPTURE_DATA *capture_data, JSON_RESULT
     }
 
     /* Transaction ID */
+
+    int j = 1;
+
+    //printf ("%d\n", j ++);
     retval = read_transaction_id (&read_pos, &tx_id);
     if (IS_FAILED (retval))
     {
         goto error;
     }
 
+    //printf ("tx_id : %d\n", tx_id);
+
+    //printf ("%d\n", j ++);
     retval = read_number_of_items (&read_pos, &number_of_items);
     if (IS_FAILED (retval))
     {
         goto error;
     }
+    
+    //printf ("number_of_itmes : %d\n", number_of_items);
 
     if (number_of_items > JSON_ARRAY_SIZE)
     {
         retval = CTC_FAILED_EXCEED_JSON_ARRAY_SIZE;
         goto error;
     }
+
+    total_count_recv_items += number_of_items;
+
+    //fprintf (stdout, "total recv count ==> %d, %d\n", total_count_recv_items, number_of_items);
+    //fflush (stdout);
 
     for (i = 0; i < number_of_items; i ++)
     {
@@ -1681,12 +1796,14 @@ int convert_capture_transaction_to_json (CAPTURE_DATA *capture_data, JSON_RESULT
         json_object_set_new (root, "Transaction ID", json_integer (tx_id));
 
         /* Table name */
+    //printf ("%d\n", j ++);
         retval = read_table_name (&read_pos, root);
         if (IS_FAILED (retval))
         {
             goto error;
         }
 
+    //printf ("%d\n", j ++);
         /* Statement type */
         retval = read_statement_type (&read_pos, root, &stmt_type);
         if (IS_FAILED (retval))
@@ -1694,10 +1811,12 @@ int convert_capture_transaction_to_json (CAPTURE_DATA *capture_data, JSON_RESULT
             goto error;
         }
 
+    //printf ("stmt_type = %d\n", stmt_type);
         /* Key columns */
         if (stmt_type == CTC_STMT_TYPE_DELETE ||
             stmt_type == CTC_STMT_TYPE_UPDATE)
         {
+    //printf ("%d\n", j ++);
             retval = read_key_columns (&read_pos, root);
             if (IS_FAILED (retval))
             {
@@ -1709,6 +1828,7 @@ int convert_capture_transaction_to_json (CAPTURE_DATA *capture_data, JSON_RESULT
         if (stmt_type == CTC_STMT_TYPE_INSERT ||
             stmt_type == CTC_STMT_TYPE_UPDATE)
         {
+    //printf ("%d\n", j ++);
             retval = read_columns (&read_pos, root);
             if (IS_FAILED (retval))
             {
