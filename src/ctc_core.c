@@ -575,6 +575,7 @@ int read_json (JOB_DESC *job_desc, char *buffer, int buffer_size, int *data_size
 
     while (IS_NOT_NULL (json))
     {
+        // printf ("json ==> %s\n", json_dumps (json, 0));
         json_array_append (result_array, json);
 
         result_size = json_dumpb (result_array, NULL, 0, 0);
